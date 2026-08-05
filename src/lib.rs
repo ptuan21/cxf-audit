@@ -1,12 +1,18 @@
 mod archive;
 mod findings;
 mod guard;
+mod limits;
 mod sample;
+mod version;
 
 pub use archive::{build_archive, read_entry, scan_archive};
 pub use findings::{Finding, Severity};
-pub use guard::{assert_safe_archive, GuardError};
+pub use guard::{assert_safe_archive, assert_within_limits, GuardError};
+pub use limits::{check_resource_limits, ZipLimits};
 pub use sample::sample_header;
+pub use version::check_version_downgrade;
+
+pub use credential_exchange_protocol::Version;
 
 /// Builds a zip-slip proof-of-concept archive: a single entry whose name is a
 /// path-traversal string, with CXF-shaped (but unencrypted) placeholder

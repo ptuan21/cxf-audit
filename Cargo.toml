@@ -2,13 +2,14 @@
 name = "cxf-audit"
 version = "0.1.0"
 edition = "2021"
-description = "Research tooling for auditing CXF (Credential Exchange Format) archives for zip-slip path traversal. Part of the passkey-cxf-security research project."
+description = "Research tooling for auditing CXF/CXP (Credential Exchange Format/Protocol) implementations: zip-slip, zip-bomb, and version-downgrade checks."
 license = "MIT"
 publish = false
 
 [dependencies]
 zip = "8.6"
 credential-exchange-format = "0.4"
+credential-exchange-protocol = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

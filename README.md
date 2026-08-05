@@ -1,8 +1,13 @@
 # cxf-audit
 
-Research tool đi kèm project [passkey-cxf-security](../../README.md), phục vụ
-mục [threat-model.md §2.4](../../docs/threat-model.md) (zip-slip / path
-traversal trong archive CXF).
+Scanner + PoC generator cho lỗ hổng zip-slip (path traversal) trong archive
+CXF (Credential Exchange Format) — chuẩn FIDO Alliance cho phép di chuyển
+passkey/password giữa các trình quản lý mật khẩu (Apple, Google, 1Password,
+Bitwarden, Dashlane...).
+
+Tách ra từ 1 project nghiên cứu bảo mật passkey-sync độc lập rộng hơn (threat
+model đầy đủ, các hướng khác đang điều tra) — project đó hiện chưa publish
+nên chưa có link công khai.
 
 ## Vì sao cần tool này
 
@@ -25,6 +30,13 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
 - `scan`: đọc 1 archive zip bất kỳ, liệt kê các entry có tên đáng ngờ (chứa
   `..`, đường dẫn tuyệt đối Unix/Windows, hoặc `\`) — không giải nén, an toàn
   để chạy trên input không tin cậy.
+- `check_resource_limits` (thư viện): flag archive có số entry hoặc tổng
+  kích thước giải nén *khai báo* vượt ngưỡng — check tĩnh cho zip bomb, đọc
+  metadata central-directory, không giải nén thật.
+- `check_version_downgrade` (thư viện): flag khi `ExportResponse.version`
+  thấp hơn `ExportRequest.version` — CXP cho phép Importer "MAY refuse"
+  downgrade này nhưng không bắt buộc, nên phần lớn implementation sẽ âm
+  thầm chấp nhận nếu không tự thêm check.
 
 ## Giới hạn — đọc trước khi dùng
 
@@ -34,8 +46,7 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
 - Kết quả `scan` chỉ nói lên "tên entry đáng ngờ" — **không** tự chứng minh
   1 importer cụ thể (Bitwarden, 1Password...) thực sự bị exploit. Muốn xác
   nhận cần thử `gen-poc` với 1 importer thật trong môi trường test/lab của
-  bạn (xem [docs/research-log.md](../../docs/research-log.md) cho tình trạng
-  hiện tại — phase test thực nghiệm trên thiết bị thật chưa chạy).
+  bạn — phase test thực nghiệm trên thiết bị thật chưa chạy.
 - Chỉ dùng trên hệ thống/tài khoản bạn được phép test. Không dùng để tấn
   công người dùng thật.
 
@@ -53,11 +64,12 @@ cargo run -- scan poc.zip other.zip ...      # scan 1 hoặc nhiều file, exit 
 cargo test
 ```
 
-14 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+24 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
-hợp lệ, và test khẳng định `zip` crate **không** tự sanitize tên entry khi
-ghi (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
-archive, không chỉ là suy đoán từ đọc spec).
+hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
+(xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
+archive, không chỉ là suy đoán từ đọc spec), cộng test cho zip-bomb limits
+và version-downgrade.
 
 ## Tích hợp vào project của bạn
 
@@ -81,6 +93,13 @@ cxf_audit::assert_safe_archive(&received_bytes)?; // Err nếu có entry đáng 
 kèm danh sách finding chi tiết, `GuardError::InvalidArchive` nếu bytes không
 phải zip hợp lệ. Đây là API dành riêng cho việc nhúng vào code thật (khác
 `scan_archive`, vốn trả `Vec<Finding>` để tự xử lý/hiển thị).
+
+Tương tự có `assert_within_limits(&bytes, &ZipLimits::default())` cho check
+zip-bomb, và `check_version_downgrade(requested, responded)` (nhận thẳng
+`cxf_audit::Version`, re-export từ `credential_exchange_protocol`) để tự gọi
+sau khi nhận `ExportResponse` — 2 hàm này không tự động chạy trong
+`assert_safe_archive`, gọi riêng vì ngưỡng zip-bomb tuỳ ứng dụng và version
+downgrade không thuộc về archive.
 
 ### 2. Pre-commit hook — tự động soát file `.zip`/`.cxf` trước khi commit
 

@@ -1,14 +1,14 @@
 use std::fmt;
 
-use crate::{scan_archive, Finding};
+use crate::{check_resource_limits, scan_archive, Finding, ZipLimits};
 
-/// Error returned by [`assert_safe_archive`].
+/// Error returned by [`assert_safe_archive`] / [`assert_within_limits`].
 #[derive(Debug)]
 pub enum GuardError {
     /// The bytes could not be parsed as a zip archive at all.
     InvalidArchive(zip::result::ZipError),
-    /// The archive parsed, but one or more entries look like a zip-slip
-    /// (path traversal) attempt.
+    /// The archive parsed, but one or more findings (zip-slip entry names,
+    /// or resource limits exceeded) were flagged.
     UnsafeEntries(Vec<Finding>),
 }
 
@@ -34,6 +34,18 @@ impl std::error::Error for GuardError {}
 /// point meant for third-party code — see README.md.
 pub fn assert_safe_archive(bytes: &[u8]) -> Result<(), GuardError> {
     let findings = scan_archive(bytes).map_err(GuardError::InvalidArchive)?;
+    if findings.is_empty() {
+        Ok(())
+    } else {
+        Err(GuardError::UnsafeEntries(findings))
+    }
+}
+
+/// Embeddable guard for CXF importers: call this on received archive bytes
+/// *before* extracting them, and reject on `Err` if entry count or declared
+/// uncompressed size exceeds `limits` (zip-bomb check).
+pub fn assert_within_limits(bytes: &[u8], limits: &ZipLimits) -> Result<(), GuardError> {
+    let findings = check_resource_limits(bytes, limits).map_err(GuardError::InvalidArchive)?;
     if findings.is_empty() {
         Ok(())
     } else {
