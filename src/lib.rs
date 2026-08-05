@@ -1,9 +1,11 @@
 mod archive;
 mod findings;
+mod guard;
 mod sample;
 
 pub use archive::{build_archive, read_entry, scan_archive};
 pub use findings::{Finding, Severity};
+pub use guard::{assert_safe_archive, GuardError};
 pub use sample::sample_header;
 
 /// Builds a zip-slip proof-of-concept archive: a single entry whose name is a

@@ -1,0 +1,7 @@
+- id: cxf-audit-zipslip
+  name: cxf-audit — scan CXF archives for zip-slip
+  description: Flags CXF/CXP export archives (.cxf/.zip) whose entry names contain path-traversal sequences before they get committed as test fixtures or golden files.
+  entry: cxf-audit scan
+  language: rust
+  files: \.(cxf|zip)$
+  pass_filenames: true

@@ -7,8 +7,36 @@ fn print_usage() {
         "cxf-audit — CXF zip-slip PoC generator/scanner (research tool, xem README.md)\n\n\
          Usage:\n  \
          cxf-audit gen-poc <output.zip> [traversal-entry-name]\n  \
-         cxf-audit scan <archive.zip>"
+         cxf-audit scan <archive.zip> [archive2.zip ...]"
     );
+}
+
+/// Scans one file, printing findings. Returns `true` if the file is clean.
+fn scan_one(path: &str) -> bool {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Lỗi đọc file {path}: {e}");
+            return false;
+        }
+    };
+    match scan_archive(&bytes) {
+        Ok(findings) if findings.is_empty() => true,
+        Ok(findings) => {
+            for f in &findings {
+                let tag = match f.severity {
+                    Severity::Critical => "CRITICAL",
+                    Severity::Info => "INFO",
+                };
+                println!("{path}: [{tag}] {} — {}", f.entry_name, f.message);
+            }
+            false
+        }
+        Err(e) => {
+            eprintln!("Lỗi đọc archive {path}: {e}");
+            false
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -39,36 +67,20 @@ fn main() -> ExitCode {
             }
         }
         Some("scan") => {
-            let Some(path) = args.get(2) else {
+            let paths = &args[2..];
+            if paths.is_empty() {
                 print_usage();
                 return ExitCode::FAILURE;
-            };
-            let bytes = match fs::read(path) {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("Lỗi đọc file {path}: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            match scan_archive(&bytes) {
-                Ok(findings) if findings.is_empty() => {
-                    println!("Không phát hiện path traversal trong tên entry.");
-                    ExitCode::SUCCESS
-                }
-                Ok(findings) => {
-                    for f in &findings {
-                        let tag = match f.severity {
-                            Severity::Critical => "CRITICAL",
-                            Severity::Info => "INFO",
-                        };
-                        println!("[{tag}] {} — {}", f.entry_name, f.message);
-                    }
-                    ExitCode::FAILURE
-                }
-                Err(e) => {
-                    eprintln!("Lỗi đọc archive: {e}");
-                    ExitCode::FAILURE
-                }
+            }
+            let all_clean = paths.iter().map(String::as_str).fold(true, |acc, path| {
+                let clean = scan_one(path);
+                acc && clean
+            });
+            if all_clean {
+                println!("Không phát hiện path traversal trong tên entry.");
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
             }
         }
         _ => {
