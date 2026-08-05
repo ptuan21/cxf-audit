@@ -1,14 +1,41 @@
-use std::{env, fs, process::ExitCode};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
-use cxf_audit::{scan_archive, zipslip_poc_archive, Severity};
+use cxf_audit::{scan_archive, scan_source, zipslip_poc_archive, Severity};
 
 fn print_usage() {
     eprintln!(
-        "cxf-audit — CXF zip-slip PoC generator/scanner (research tool, xem README.md)\n\n\
+        "cxf-audit — CXF/CXP zip-slip + source-code scanner (research tool, xem README.md)\n\n\
          Usage:\n  \
          cxf-audit gen-poc <output.zip> [traversal-entry-name]\n  \
-         cxf-audit scan <archive.zip> [archive2.zip ...]"
+         cxf-audit scan <archive.zip> [archive2.zip ...]\n  \
+         cxf-audit scan-source <file-or-dir> [file-or-dir2 ...]"
     );
+}
+
+/// Recursively collects file paths under `root` (or just `root` itself if
+/// it's a file). Skips paths it can't read rather than failing the whole
+/// walk — a locked/permission-denied subdirectory shouldn't abort scanning
+/// the rest of the tree.
+fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
+    if root.is_file() {
+        out.push(root.to_path_buf());
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
 }
 
 /// Scans one file, printing findings. Returns `true` if the file is clean.
@@ -81,6 +108,40 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
+            }
+        }
+        Some("scan-source") => {
+            let roots = &args[2..];
+            if roots.is_empty() {
+                print_usage();
+                return ExitCode::FAILURE;
+            }
+            let mut files = Vec::new();
+            for root in roots {
+                collect_files(Path::new(root), &mut files);
+            }
+            let mut any_findings = false;
+            for path in &files {
+                let Ok(content) = fs::read_to_string(path) else {
+                    continue; // binary/non-UTF8 file — not a source file we scan, skip silently
+                };
+                let Some(findings) = scan_source(path, &content) else {
+                    continue; // extension not recognized (not .rs/.kt/.kts/.swift)
+                };
+                for f in &findings {
+                    any_findings = true;
+                    let tag = match f.severity {
+                        Severity::Critical => "CRITICAL",
+                        Severity::Info => "INFO",
+                    };
+                    println!("{}:{}: [{tag}] {}", f.file, f.line, f.message);
+                }
+            }
+            if any_findings {
+                ExitCode::FAILURE
+            } else {
+                println!("Không phát hiện pattern đáng ngờ trong source đã quét.");
+                ExitCode::SUCCESS
             }
         }
         _ => {

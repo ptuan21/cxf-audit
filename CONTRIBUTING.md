@@ -8,8 +8,12 @@ archive/protocol CXF/CXP) — issue/PR phù hợp nhất là:
 - Sửa false positive/false negative ở rule hiện có, kèm test tái hiện.
 - Cải thiện tích hợp (pre-commit hook, CI, ergonomics của API thư viện).
 
-Không phải hướng phù hợp: mở rộng thành scanner bảo mật tổng quát cho mọi
-loại code (đã cân nhắc và cố tình không đi hướng đó — xem README).
+Không phải hướng phù hợp: rule cho 1 lớp lỗ hổng chung chung không gắn với
+CXF/CXP cụ thể (SQL injection, XSS, secret leak tổng quát...) — đã cân nhắc
+mở rộng thành scanner bảo mật tổng quát và **cố tình không đi hướng đó**
+(xem README). Thêm ngôn ngữ mới cho `scan-source` thì được, miễn rule vẫn
+nhắm đúng 1 pattern CXF/CXP-relevant cụ thể (v.d. zip-slip khi implement
+importer) — không phải "thêm ngôn ngữ" là lý do để mở rộng phạm vi rule.
 
 ## Chạy thử local
 
@@ -23,7 +27,7 @@ cargo fmt --check
 Cả 4 lệnh trên đều chạy trong CI (`.github/workflows/ci.yml`) — PR phải xanh
 cả 4 mới được merge.
 
-## Thêm 1 rule mới
+## Thêm 1 rule mới — quét dữ liệu (archive/protocol)
 
 Mỗi rule là 1 hàm trả `Vec<Finding>` (xem `src/archive.rs`, `src/limits.rs`,
 `src/version.rs` làm ví dụ). Yêu cầu:
@@ -35,6 +39,29 @@ Mỗi rule là 1 hàm trả `Vec<Finding>` (xem `src/archive.rs`, `src/limits.rs
    làm ví dụ mẫu.
 3. Nếu rule đủ quan trọng để chặn runtime (không chỉ báo cáo), thêm hàm
    `assert_*` tương ứng trong `src/guard.rs`.
+
+## Thêm 1 rule mới — quét source code (`scan-source`)
+
+Mỗi ngôn ngữ là 1 file trong `src/source_scan/` (`rust.rs`, `kotlin.rs`,
+`swift.rs`), trả `Vec<SourceFinding>`, dùng tree-sitter.
+
+- Không biết chắc tên node/field của grammar? Đừng đoán — dùng
+  `cargo run --example dump_tree -- <rust|kotlin|swift> < snippet` để in
+  S-expression thật rồi tra `node-types.json` của crate grammar tương ứng
+  (đã làm vậy khi viết 3 rule hiện có, build pass ngay lần đầu nhờ đọc trước
+  thay vì đoán).
+- Grammar khác nhau về độ giàu field: Rust/Swift có field name (`function:`,
+  `suffix:`...) nên dùng query khai báo (`Query`/`QueryCursor`) được; Kotlin
+  không có field trên `call_expression` nên phải tự walk cây thủ công (xem
+  `kotlin.rs` làm ví dụ) — đừng cố ép query khai báo nếu grammar không hỗ
+  trợ, sẽ ra query sai mà không báo lỗi rõ ràng.
+- Ghi rõ giới hạn heuristic của rule (false positive khi nào, false negative
+  khi nào) — xem phần "Riêng scan-source" trong README làm mẫu cách viết.
+- Thêm ngôn ngữ hoàn toàn mới: kiểm tra ràng buộc version `tree-sitter` của
+  grammar crate mới có tương thích với 3 grammar hiện có không (xem comment
+  trong `Cargo.toml` — tất cả đang pin về `0.20.x` vì đó là dải chung duy
+  nhất giữa rust/kotlin/swift ở thời điểm viết). Nếu không tương thích, cần
+  đánh giá lại có đáng downgrade/tách hay không trước khi thêm.
 
 ## Báo cáo lỗ hổng thật tìm được bằng tool này
 

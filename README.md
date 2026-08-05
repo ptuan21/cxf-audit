@@ -1,9 +1,15 @@
 # cxf-audit
 
-Scanner + PoC generator cho lỗ hổng zip-slip (path traversal) trong archive
-CXF (Credential Exchange Format) — chuẩn FIDO Alliance cho phép di chuyển
-passkey/password giữa các trình quản lý mật khẩu (Apple, Google, 1Password,
-Bitwarden, Dashlane...).
+Scanner cho lỗ hổng trong implementation CXF/CXP (Credential Exchange
+Format/Protocol) — chuẩn FIDO Alliance cho phép di chuyển passkey/password
+giữa các trình quản lý mật khẩu (Apple, Google, 1Password, Bitwarden,
+Dashlane...). Quét cả 2 tầng:
+
+- **Dữ liệu**: archive CXF thật (zip-slip, zip-bomb) và protocol response
+  (version downgrade).
+- **Source code** của dev tự implement CXF/CXP (Rust, Kotlin, Swift) — cảnh
+  báo pattern zip-slip kinh điển trước khi merge, không cần archive thật để
+  test.
 
 Tách ra từ 1 project nghiên cứu bảo mật passkey-sync độc lập rộng hơn (threat
 model đầy đủ, các hướng khác đang điều tra) — project đó hiện chưa publish
@@ -37,6 +43,16 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
   thấp hơn `ExportRequest.version` — CXP cho phép Importer "MAY refuse"
   downgrade này nhưng không bắt buộc, nên phần lớn implementation sẽ âm
   thầm chấp nhận nếu không tự thêm check.
+- `scan-source` / `scan_source()` (thư viện): quét **source code** bạn tự
+  viết (không phải archive) tìm pattern zip-slip kinh điển, dùng tree-sitter
+  để hiểu cú pháp thật (không match nhầm trong comment/string như regex
+  thô):
+  - **Rust**: gọi `.by_index(`/`.by_name(` trực tiếp trên `ZipArchive` — API
+    thô, severity hạ xuống Info nếu file có tham chiếu `cxf_audit` (heuristic
+    cùng-file, không phải phân tích luồng dữ liệu thật).
+  - **Kotlin**: `File(dir, entry.name)` / `File(dir, entry.entryName)` —
+    antipattern zip-slip kinh điển trong tài liệu OWASP.
+  - **Swift**: gọi `.extract(` (kiểu ZIPFoundation `Archive.extract`).
 
 ## Giới hạn — đọc trước khi dùng
 
@@ -50,12 +66,31 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
 - Chỉ dùng trên hệ thống/tài khoản bạn được phép test. Không dùng để tấn
   công người dùng thật.
 
+**Riêng `scan-source`:** đây là **pattern matching theo cú pháp, không phải
+data-flow/taint analysis thật**. Cụ thể:
+- Rule chỉ nhìn *tên hàm được gọi* (Rust: `by_index`/`by_name`; Swift:
+  `extract`) — **không kiểm tra kiểu của receiver**, nên 1 hàm tên trùng
+  ngẫu nhiên trên type khác (không liên quan zip) cũng bị flag (false
+  positive).
+- Rule Kotlin check "argument có chứa `.name`" bằng so khớp text trong span
+  của lời gọi `File(...)` — không phải phân tích xem biến đó thực sự đến từ
+  đâu, nên `File(dir, someOtherThing.name)` không liên quan zip vẫn có thể
+  bị flag.
+- Heuristic "hạ severity nếu file có `cxf_audit`" (rule Rust) chỉ xét *toàn
+  file*, không xét scope/thứ tự gọi trước-sau — gọi guard ở 1 hàm khác trong
+  cùng file vẫn hạ severity dù hàm chứa `by_index` không hề được guard.
+- Không có rule nào track được lời gọi qua nhiều file/hàm (cross-function).
+
+Coi kết quả `scan-source` là **gợi ý cần xem lại bằng mắt**, không phải kết
+luận cuối cùng.
+
 ## Dùng thử (CLI)
 
 ```sh
 cargo run -- gen-poc poc.zip                 # dùng entry name mặc định
 cargo run -- gen-poc poc.zip "../../etc/foo" # tuỳ chỉnh entry name
-cargo run -- scan poc.zip other.zip ...      # scan 1 hoặc nhiều file, exit code != 0 nếu có finding
+cargo run -- scan poc.zip other.zip ...      # scan archive, exit code != 0 nếu có finding
+cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc thư mục, đệ quy)
 ```
 
 ## Test
@@ -64,12 +99,13 @@ cargo run -- scan poc.zip other.zip ...      # scan 1 hoặc nhiều file, exit 
 cargo test
 ```
 
-24 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+32 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
 hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
 (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
-archive, không chỉ là suy đoán từ đọc spec), cộng test cho zip-bomb limits
-và version-downgrade.
+archive, không chỉ là suy đoán từ đọc spec), test cho zip-bomb limits và
+version-downgrade, cộng 8 test cho `scan-source` (dương tính + âm tính, cả
+3 ngôn ngữ).
 
 ## Tích hợp vào project của bạn
 
@@ -101,18 +137,19 @@ sau khi nhận `ExportResponse` — 2 hàm này không tự động chạy trong
 `assert_safe_archive`, gọi riêng vì ngưỡng zip-bomb tuỳ ứng dụng và version
 downgrade không thuộc về archive.
 
-### 2. Pre-commit hook — tự động soát file `.zip`/`.cxf` trước khi commit
+### 2. Pre-commit hook — tự động soát trước khi commit
 
-Đã verify thật bằng `pre-commit try-repo` (không chỉ viết cho có — chạy thử
-trên 1 file sạch + 1 file PoC độc hại, hook fail đúng file độc hại, bỏ qua
-file sạch). Repo của bạn thêm vào `.pre-commit-config.yaml`:
+2 hook, cả hai đã verify thật bằng `pre-commit try-repo` (chạy thử trên file
+sạch + file có lỗi, hook fail đúng file lỗi, bỏ qua file sạch — không chỉ
+viết cho có):
 
 ```yaml
 repos:
   - repo: https://github.com/ptuan21/cxf-audit
-    rev: c1368fb # ghim theo commit hoặc tag cụ thể, đừng dùng branch động
+    rev: <commit-hoặc-tag-mới-nhất> # đừng dùng branch động
     hooks:
-      - id: cxf-audit-zipslip
+      - id: cxf-audit-zipslip       # soát file .zip/.cxf
+      - id: cxf-audit-source-scan   # soát file .rs/.kt/.kts/.swift
 ```
 
 (`language: rust` trong `.pre-commit-hooks.yaml` khiến pre-commit tự

@@ -5,3 +5,11 @@
   language: rust
   files: \.(cxf|zip)$
   pass_filenames: true
+
+- id: cxf-audit-source-scan
+  name: cxf-audit — scan source for unsafe CXF/CXP extraction patterns
+  description: Flags known zip-slip-enabling call patterns (raw ZipArchive access in Rust, File(dir, entry.name) in Kotlin, .extract( in Swift) in changed source files.
+  entry: cxf-audit scan-source
+  language: rust
+  files: \.(rs|kt|kts|swift)$
+  pass_filenames: true
