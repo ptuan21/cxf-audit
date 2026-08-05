@@ -79,9 +79,9 @@ runtime) hay chỉ muốn CI/pre-commit tự động soát các file test/fixtur
 ### 1. Làm thư viện Rust — chặn ngay trong code import của bạn (khuyến nghị nếu bạn tự viết importer)
 
 ```toml
-# Cargo.toml của bạn — trỏ path/git đến crate này (chưa publish lên crates.io)
+# Cargo.toml của bạn (chưa publish lên crates.io, dùng git trực tiếp)
 [dependencies]
-cxf-audit = { path = "path/to/cxf-audit" }
+cxf-audit = { git = "https://github.com/ptuan21/cxf-audit", rev = "c1368fb" }
 ```
 
 ```rust
@@ -109,8 +109,8 @@ file sạch). Repo của bạn thêm vào `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
-  - repo: <url-repo-này-khi-đã-publish-lên-git>
-    rev: <commit-hoặc-tag>
+  - repo: https://github.com/ptuan21/cxf-audit
+    rev: c1368fb # ghim theo commit hoặc tag cụ thể, đừng dùng branch động
     hooks:
       - id: cxf-audit-zipslip
 ```
@@ -121,10 +121,8 @@ repos:
 ### 3. CI (GitHub Actions)
 
 Repo này có sẵn `.github/workflows/ci.yml` (fmt + build + clippy -D warnings
-+ test) — cú pháp đã verify bằng `actionlint`, và từng bước đã chạy xanh
-local. **Giới hạn còn lại:** chưa tự chạy trên runner GitHub Actions thật vì
-repo chưa được push lên GitHub — nên chưa loại trừ hoàn toàn khả năng có vấn
-đề riêng của môi trường runner (network, cache action...).
++ test) — đã verify **thật** trên runner GitHub Actions (không chỉ
+`actionlint`/chạy local): [xanh toàn bộ 4 bước](https://github.com/ptuan21/cxf-audit/actions).
 
 Nếu bạn dùng `cxf-audit` như dependency trong project khác (không phải fork
 repo này), thêm vào workflow của bạn:
