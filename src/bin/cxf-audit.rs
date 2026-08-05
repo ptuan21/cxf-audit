@@ -16,13 +16,53 @@ fn print_usage() {
     );
 }
 
+/// Directory names pruned while *recursing* — never applied to a path given
+/// directly on the command line, only to subdirectories discovered while
+/// walking (so `cxf-audit scan-source target/` still works if you really
+/// mean it). VCS metadata and build-artifact trees across the languages
+/// this tool cares about (Rust, Kotlin/Gradle, Swift/CocoaPods, plus the
+/// generic JS `node_modules` since importer glue code is sometimes TS/JS):
+/// scanning into them is both wasteful (thousands of generated files) and
+/// produces duplicate findings (e.g. `cargo package`'s `target/package/`
+/// copy of the source tree).
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    "build",
+    ".build",
+    ".gradle",
+    "dist",
+    ".venv",
+    "venv",
+    "Pods",
+    ".idea",
+    ".vscode",
+];
+
+fn is_pruned_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| SKIP_DIRS.contains(&name))
+}
+
 /// Recursively collects file paths under `root` (or just `root` itself if
 /// it's a file). Skips paths it can't read rather than failing the whole
 /// walk — a locked/permission-denied subdirectory shouldn't abort scanning
-/// the rest of the tree.
+/// the rest of the tree. Does not follow symlinks (avoids cycles and
+/// silently scanning outside the tree the caller asked for).
 fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
-    if root.is_file() {
+    let Ok(meta) = fs::symlink_metadata(root) else {
+        return;
+    };
+    if meta.is_symlink() {
+        return;
+    }
+    if meta.is_file() {
         out.push(root.to_path_buf());
+        return;
+    }
+    if !meta.is_dir() {
         return;
     }
     let Ok(entries) = fs::read_dir(root) else {
@@ -30,11 +70,10 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_files(&path, out);
-        } else {
-            out.push(path);
+        if is_pruned_dir(&path) {
+            continue;
         }
+        collect_files(&path, out);
     }
 }
 
@@ -171,5 +210,79 @@ fn main() -> ExitCode {
             print_usage();
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Unique temp dir per test — avoids collisions when tests run in
+    /// parallel (the default for `cargo test`).
+    fn temp_dir(label: &str) -> PathBuf {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            env::temp_dir().join(format!("cxf-audit-test-{label}-{n}-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn is_pruned_dir_matches_known_noise_names() {
+        assert!(is_pruned_dir(Path::new("some/path/target")));
+        assert!(is_pruned_dir(Path::new(".git")));
+        assert!(is_pruned_dir(Path::new("a/b/node_modules")));
+    }
+
+    #[test]
+    fn is_pruned_dir_does_not_match_unrelated_names() {
+        assert!(!is_pruned_dir(Path::new("src")));
+        assert!(!is_pruned_dir(Path::new("targets"))); // not an exact match
+    }
+
+    #[test]
+    fn collect_files_skips_pruned_subdirectories() {
+        let root = temp_dir("prune");
+        fs::write(root.join("real.rs"), "fn f() {}").unwrap();
+        let noise = root.join("target");
+        fs::create_dir_all(&noise).unwrap();
+        fs::write(noise.join("generated.rs"), "fn g() {}").unwrap();
+
+        let mut files = Vec::new();
+        collect_files(&root, &mut files);
+
+        assert_eq!(files, vec![root.join("real.rs")]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn collect_files_still_scans_a_pruned_name_if_passed_explicitly() {
+        // SKIP_DIRS only prunes subdirectories found while recursing — a
+        // root the caller names directly (e.g. `scan-source target/`) is
+        // still scanned, matching the doc comment on SKIP_DIRS.
+        let root = temp_dir("explicit-target").join("target");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("real.rs"), "fn f() {}").unwrap();
+
+        let mut files = Vec::new();
+        collect_files(&root, &mut files);
+
+        assert_eq!(files, vec![root.join("real.rs")]);
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn collect_files_does_not_follow_a_cyclic_symlink() {
+        let root = temp_dir("symlink-cycle");
+        fs::write(root.join("real.rs"), "fn f() {}").unwrap();
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+
+        let mut files = Vec::new();
+        collect_files(&root, &mut files); // must terminate, not recurse forever
+
+        assert_eq!(files, vec![root.join("real.rs")]);
+        fs::remove_dir_all(&root).unwrap();
     }
 }
