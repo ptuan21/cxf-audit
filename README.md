@@ -137,9 +137,11 @@ cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc th�
 cargo run -- --help                          # xem tất cả subcommand
 ```
 
-**Không nhớ subcommand nào?** Chạy `cxf-audit` không kèm gì — vào menu tương
-tác, chọn số và điền đường dẫn khi được hỏi (đã verify thật qua terminal,
-không chỉ test giả lập):
+**Không nhớ subcommand nào, hoặc không muốn tự gõ đường dẫn?** Chạy
+`cxf-audit` không kèm gì — vào menu tương tác, chọn số. Chọn scan archive
+hoặc scan source sẽ mở **trình duyệt file/thư mục ngay trong terminal**
+(cũng chọn bằng số, không cần gõ path tay) — đã verify thật qua terminal
+thật, không chỉ test giả lập:
 
 ```
 $ cxf-audit
@@ -149,8 +151,22 @@ cxf-audit — chọn 1 việc:
   2) Scan source code (Rust/Kotlin/Swift)
   3) Tạo archive PoC zip-slip
   q) Thoát
+> 2
+
+📂 /Users/you/my-project
+  1) .. (lên thư mục cha)
+  2) ✅ Chọn thư mục này (/Users/you/my-project)
+  3) 📁 src/
+  4)    Cargo.toml
+  0) Huỷ, quay lại menu chính
 >
 ```
+
+Điều hướng bằng số: gõ số thư mục để đi vào, `1` để lùi lại thư mục cha,
+hoặc chọn "✅ Chọn thư mục này" để quét cả thư mục hiện tại (scan-source
+chấp nhận cả file lẫn thư mục). `scan` archive dùng cùng trình duyệt nhưng
+không có tuỳ chọn "chọn thư mục" — phải chọn tới 1 file cụ thể vì archive
+luôn là 1 file.
 
 **Dùng CLI thường xuyên?** Bật tab-completion cho shell:
 
@@ -166,7 +182,7 @@ cxf-audit completions fish > ~/.config/fish/completions/cxf-audit.fish
 cargo test
 ```
 
-58 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+64 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
 hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
 (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
@@ -174,11 +190,12 @@ archive, không chỉ là suy đoán từ đọc spec), test cho zip-bomb limits
 version-downgrade, 17 test cho `scan-source` (dương tính + âm tính, cả 3
 ngôn ngữ + HPKE mode + zip-bomb-in-source + guard marker verify trên code
 thật từ 3 repo ngoài — georust/transitfeed, blockads-android, Modern-Apps,
-ZIPFoundation), 5 test cho output SARIF, cộng 12 test cho CLI (parse mọi
-subcommand, `collect_files` bỏ qua thư mục noise/không theo symlink cycle,
-6 test cho menu tương tác — kể cả 2 test chạy trọn vẹn 1 luồng thật qua
-`std::io::Cursor` giả lập stdin, tạo file/tìm finding thật, không chỉ mock)
-(schema hợp lệ, rule dedup, level mapping).
+ZIPFoundation), 5 test cho output SARIF (schema hợp lệ, rule dedup, level
+mapping), cộng 18 test cho CLI: parse mọi subcommand, `collect_files` bỏ
+qua thư mục noise/không theo symlink cycle, và 12 test cho menu tương tác +
+trình duyệt file/thư mục — kể cả các luồng chạy trọn vẹn qua
+`std::io::Cursor` giả lập stdin (điều hướng thư mục, tạo file/tìm finding
+thật, không chỉ mock riêng lẻ từng hàm).
 
 ## Tích hợp vào project của bạn
 

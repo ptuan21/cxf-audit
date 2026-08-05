@@ -238,12 +238,111 @@ fn prompt<R: BufRead, W: Write>(
     Ok(Some(line.trim().to_string()))
 }
 
+/// One entry the file/directory browser can present, plus what selecting
+/// it does. Kept separate from its display label so `browse()` never has
+/// to re-parse text to figure out what the user picked.
+#[derive(Clone)]
+enum BrowseChoice {
+    Up(PathBuf),
+    SelectCurrentDir,
+    Descend(PathBuf),
+    PickFile(PathBuf),
+}
+
+/// Lists one screen's worth of browser entries for `current`: ".." (if not
+/// at a filesystem root), "select this directory" (only when
+/// `allow_dir_selection`), then subdirectories and files, alphabetically.
+/// Unreadable directories (permissions) just show as empty rather than
+/// erroring the whole browse session.
+fn list_browse_entries(current: &Path, allow_dir_selection: bool) -> Vec<(String, BrowseChoice)> {
+    let mut items = Vec::new();
+    if let Some(parent) = current.parent() {
+        items.push((
+            ".. (lên thư mục cha)".to_string(),
+            BrowseChoice::Up(parent.to_path_buf()),
+        ));
+    }
+    if allow_dir_selection {
+        items.push((
+            format!("✅ Chọn thư mục này ({})", current.display()),
+            BrowseChoice::SelectCurrentDir,
+        ));
+    }
+    let mut entries: Vec<_> = fs::read_dir(current)
+        .map(|r| r.flatten().collect())
+        .unwrap_or_default();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if is_pruned_dir(&path) {
+            continue; // same noise list as scan-source's own recursion
+        }
+        if path.is_dir() {
+            items.push((format!("📁 {name}/"), BrowseChoice::Descend(path)));
+        } else {
+            items.push((format!("   {name}"), BrowseChoice::PickFile(path)));
+        }
+    }
+    items
+}
+
+/// Numbered file/directory browser: prints `current`'s contents, reads a
+/// number choice, and either descends/ascends or returns the picked path.
+/// `allow_dir_selection` controls whether there's a "select this
+/// directory" option (needed for `scan-source`, which accepts a directory;
+/// not offered for `scan`, which needs a specific archive file). Returns
+/// `Ok(None)` on EOF or an explicit cancel ("0").
+fn browse<R: BufRead, W: Write>(
+    start: &Path,
+    allow_dir_selection: bool,
+    input: &mut R,
+    out: &mut W,
+) -> io::Result<Option<PathBuf>> {
+    let mut current = start.to_path_buf();
+    loop {
+        let items = list_browse_entries(&current, allow_dir_selection);
+        writeln!(out)?;
+        writeln!(out, "📂 {}", current.display())?;
+        for (i, (label, _)) in items.iter().enumerate() {
+            writeln!(out, "  {}) {label}", i + 1)?;
+        }
+        writeln!(out, "  0) Huỷ, quay lại menu chính")?;
+
+        let Some(choice) = prompt("> ", input, out)? else {
+            return Ok(None);
+        };
+        if choice == "0" {
+            return Ok(None);
+        }
+        let Ok(idx) = choice.parse::<usize>() else {
+            writeln!(out, "Không hợp lệ, nhập số trong danh sách.")?;
+            continue;
+        };
+        let Some((_, action)) = idx.checked_sub(1).and_then(|i| items.get(i)) else {
+            writeln!(out, "Không hợp lệ, nhập số trong danh sách.")?;
+            continue;
+        };
+        match action.clone() {
+            BrowseChoice::Up(p) | BrowseChoice::Descend(p) => current = p,
+            BrowseChoice::SelectCurrentDir => return Ok(Some(current)),
+            BrowseChoice::PickFile(p) => return Ok(Some(p)),
+        }
+    }
+}
+
 /// Interactive menu for `cxf-audit` run with no subcommand — guides a user
-/// through the same operations the flag-based subcommands offer, without
-/// needing to remember any flag/subcommand names. Generic over
-/// input/output so tests can drive it with a scripted `Cursor<&[u8]>`
-/// instead of real stdin/stdout.
-fn run_interactive_menu<R: BufRead, W: Write>(mut input: R, out: &mut W) -> io::Result<ExitCode> {
+/// through the same operations the flag-based subcommands offer via
+/// numbered choices, including a file/directory browser instead of typing
+/// full paths by hand. Generic over input/output so tests can drive it
+/// with a scripted `Cursor<&[u8]>` instead of real stdin/stdout, and takes
+/// an explicit `start_dir` (rather than reading `env::current_dir()`
+/// itself) so tests can point the browser at a controlled temp directory.
+fn run_interactive_menu<R: BufRead, W: Write>(
+    mut input: R,
+    out: &mut W,
+    start_dir: &Path,
+) -> io::Result<ExitCode> {
     loop {
         writeln!(out)?;
         writeln!(out, "cxf-audit — chọn 1 việc:")?;
@@ -258,24 +357,17 @@ fn run_interactive_menu<R: BufRead, W: Write>(mut input: R, out: &mut W) -> io::
 
         match choice.as_str() {
             "1" => {
-                let Some(path_str) = prompt("Đường dẫn archive: ", &mut input, out)? else {
-                    return Ok(ExitCode::SUCCESS);
-                };
-                if path_str.is_empty() {
+                let Some(path) = browse(start_dir, false, &mut input, out)? else {
                     continue;
-                }
-                if scan_one_archive(Path::new(&path_str), out)? {
+                };
+                if scan_one_archive(&path, out)? {
                     writeln!(out, "OK: không phát hiện path traversal.")?;
                 }
             }
             "2" => {
-                let Some(path_str) = prompt("Đường dẫn file/thư mục source: ", &mut input, out)?
-                else {
-                    return Ok(ExitCode::SUCCESS);
-                };
-                if path_str.is_empty() {
+                let Some(path) = browse(start_dir, true, &mut input, out)? else {
                     continue;
-                }
+                };
                 let Some(format_str) =
                     prompt("Format [text/sarif] (Enter = text): ", &mut input, out)?
                 else {
@@ -286,13 +378,17 @@ fn run_interactive_menu<R: BufRead, W: Write>(mut input: R, out: &mut W) -> io::
                 } else {
                     OutputFormat::Text
                 };
-                run_scan_source(&[PathBuf::from(path_str)], format, out)?;
+                run_scan_source(&[path], format, out)?;
             }
             "3" => {
-                let Some(out_path_str) = prompt("File zip output: ", &mut input, out)? else {
+                let Some(dir) = browse(start_dir, true, &mut input, out)? else {
+                    continue;
+                };
+                let Some(filename) = prompt("Tên file zip (v.d. poc.zip): ", &mut input, out)?
+                else {
                     return Ok(ExitCode::SUCCESS);
                 };
-                if out_path_str.is_empty() {
+                if filename.is_empty() {
                     continue;
                 }
                 let Some(entry_name_input) =
@@ -305,7 +401,7 @@ fn run_interactive_menu<R: BufRead, W: Write>(mut input: R, out: &mut W) -> io::
                 } else {
                     entry_name_input
                 };
-                run_gen_poc(Path::new(&out_path_str), &entry_name, out)?;
+                run_gen_poc(&dir.join(filename), &entry_name, out)?;
             }
             "q" | "quit" | "exit" => return Ok(ExitCode::SUCCESS),
             "" => {}
@@ -358,7 +454,8 @@ fn main() -> ExitCode {
         }
         None => {
             let stdin = io::stdin();
-            run_interactive_menu(stdin.lock(), &mut stdout).unwrap_or(ExitCode::FAILURE)
+            let start_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            run_interactive_menu(stdin.lock(), &mut stdout, &start_dir).unwrap_or(ExitCode::FAILURE)
         }
     }
 }
@@ -464,7 +561,7 @@ mod tests {
     fn interactive_menu_quit_immediately_exits_cleanly() {
         let input = Cursor::new(b"q\n".to_vec());
         let mut out = Vec::new();
-        let code = run_interactive_menu(input, &mut out).unwrap();
+        let code = run_interactive_menu(input, &mut out, Path::new(".")).unwrap();
         assert_eq!(code, ExitCode::SUCCESS);
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("chọn 1 việc"));
@@ -474,7 +571,7 @@ mod tests {
     fn interactive_menu_exits_cleanly_on_eof_instead_of_looping_forever() {
         let input = Cursor::new(Vec::new()); // immediate EOF, no "q" needed
         let mut out = Vec::new();
-        let code = run_interactive_menu(input, &mut out).unwrap();
+        let code = run_interactive_menu(input, &mut out, Path::new(".")).unwrap();
         assert_eq!(code, ExitCode::SUCCESS);
     }
 
@@ -482,23 +579,104 @@ mod tests {
     fn interactive_menu_unknown_choice_reprompts_instead_of_exiting() {
         let input = Cursor::new(b"nonsense\nq\n".to_vec());
         let mut out = Vec::new();
-        let code = run_interactive_menu(input, &mut out).unwrap();
+        let code = run_interactive_menu(input, &mut out, Path::new(".")).unwrap();
         assert_eq!(code, ExitCode::SUCCESS);
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("Không hiểu lựa chọn"));
     }
 
     #[test]
-    fn interactive_menu_gen_poc_flow_creates_real_archive() {
+    fn browse_lists_up_and_dir_selection_before_entries_alphabetically() {
+        let dir = temp_dir("browse-list");
+        fs::write(dir.join("b.rs"), "").unwrap();
+        fs::write(dir.join("a.rs"), "").unwrap();
+        fs::create_dir_all(dir.join("z_subdir")).unwrap();
+
+        let entries = list_browse_entries(&dir, true);
+        let labels: Vec<&str> = entries.iter().map(|(l, _)| l.as_str()).collect();
+
+        assert_eq!(labels[0], ".. (lên thư mục cha)");
+        assert!(labels[1].starts_with("✅ Chọn thư mục này"));
+        // a.rs before b.rs before z_subdir/ — read_dir sorted by file name.
+        assert!(labels[2].contains("a.rs"));
+        assert!(labels[3].contains("b.rs"));
+        assert!(labels[4].contains("z_subdir"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn browse_without_dir_selection_omits_that_option() {
+        let dir = temp_dir("browse-nodirselect");
+        let entries = list_browse_entries(&dir, false);
+        assert!(!entries.iter().any(|(l, _)| l.starts_with("✅")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn browse_prunes_noise_directories_like_scan_source_does() {
+        let dir = temp_dir("browse-prune");
+        fs::create_dir_all(dir.join("target")).unwrap();
+        fs::write(dir.join("real.rs"), "").unwrap();
+
+        let entries = list_browse_entries(&dir, false);
+        assert!(!entries.iter().any(|(l, _)| l.contains("target")));
+        assert!(entries.iter().any(|(l, _)| l.contains("real.rs")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn browse_selects_current_dir_via_numbered_choice() {
+        let dir = temp_dir("browse-select");
+        // ".. " is item 1 (parent always exists under a temp dir), "✅
+        // Chọn thư mục này" is item 2 since the dir starts empty.
+        let mut input = Cursor::new(b"2\n".to_vec());
+        let mut out = Vec::new();
+        let picked = browse(&dir, true, &mut input, &mut out).unwrap().unwrap();
+        assert_eq!(picked, dir);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn browse_descends_into_subdirectory_then_picks_a_file() {
+        let dir = temp_dir("browse-descend");
+        let subdir = dir.join("sub");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("target.rs"), "").unwrap();
+        // No dir-selection offered, so with an empty top-level dir except
+        // "sub/": item 1 = "..", item 2 = "sub/". Descend (2), then in
+        // "sub/" item 1 = "..", item 2 = "target.rs" — pick it (2).
+        let mut input = Cursor::new(b"2\n2\n".to_vec());
+        let mut out = Vec::new();
+        let picked = browse(&dir, false, &mut input, &mut out).unwrap().unwrap();
+        assert_eq!(picked, subdir.join("target.rs"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn browse_cancel_returns_none_and_invalid_choice_reprompts() {
+        let dir = temp_dir("browse-cancel");
+        let mut input = Cursor::new(b"not-a-number\n0\n".to_vec());
+        let mut out = Vec::new();
+        let picked = browse(&dir, true, &mut input, &mut out).unwrap();
+        assert!(picked.is_none());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Không hợp lệ"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn interactive_menu_gen_poc_flow_creates_real_archive_via_browser() {
         let dir = temp_dir("menu-genpoc");
-        let out_path = dir.join("poc.zip");
-        let script = format!("3\n{}\n\nq\n", out_path.display());
-        let input = Cursor::new(script.into_bytes());
+        // "3" (gen-poc) -> browse: "2" (✅ select this empty dir, item 2
+        // after ".."), -> filename -> entry name (default) -> "q".
+        let script = "3\n2\npoc.zip\n\nq\n";
+        let input = Cursor::new(script.as_bytes().to_vec());
         let mut out = Vec::new();
 
-        let code = run_interactive_menu(input, &mut out).unwrap();
+        let code = run_interactive_menu(input, &mut out, &dir).unwrap();
 
         assert_eq!(code, ExitCode::SUCCESS);
+        let out_path = dir.join("poc.zip");
         assert!(
             out_path.exists(),
             "gen-poc menu flow did not create the archive"
@@ -509,18 +687,21 @@ mod tests {
     }
 
     #[test]
-    fn interactive_menu_scan_source_flow_finds_real_finding() {
+    fn interactive_menu_scan_source_flow_finds_real_finding_via_browser() {
         let dir = temp_dir("menu-scansource");
         fs::write(
             dir.join("vuln.rs"),
             "fn f(a: &mut zip::ZipArchive<std::fs::File>) { a.by_index(0).unwrap(); }",
         )
         .unwrap();
-        let script = format!("2\n{}\n\nq\n", dir.display());
-        let input = Cursor::new(script.into_bytes());
+        // "2" (scan-source) -> browse: ".." is item 1, "✅ select dir" is
+        // item 2, "vuln.rs" is item 3 (only file, alphabetically first) ->
+        // pick the file directly -> format (default) -> "q".
+        let script = "2\n3\n\nq\n";
+        let input = Cursor::new(script.as_bytes().to_vec());
         let mut out = Vec::new();
 
-        let code = run_interactive_menu(input, &mut out).unwrap();
+        let code = run_interactive_menu(input, &mut out, &dir).unwrap();
 
         assert_eq!(code, ExitCode::SUCCESS);
         let text = String::from_utf8(out).unwrap();
