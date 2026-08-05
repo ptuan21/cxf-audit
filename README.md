@@ -59,10 +59,19 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
   thô):
   - **Rust**: gọi `.by_index(`/`.by_name(` trực tiếp trên `ZipArchive` — API
     thô, severity hạ xuống Info nếu file có tham chiếu `cxf_audit` (heuristic
-    cùng-file, không phải phân tích luồng dữ liệu thật).
+    cùng-file, không phải phân tích luồng dữ liệu thật). Cùng lúc, nếu file
+    có gọi `by_index`/`by_name` mà không thấy tham chiếu
+    `assert_within_limits`/`check_resource_limits`/`ZipLimits` ở đâu, thêm
+    1 finding riêng cảnh báo thiếu check zip-bomb (§2.4). Ngoài ra flag việc
+    dựng `HpkeMode::Base`/`HpkeMode::Psk` — không xác thực người gửi ở tầng
+    KEM (RFC 9180), an toàn phụ thuộc hoàn toàn vào chữ ký challenge riêng
+    (§2.3 threat model).
   - **Kotlin**: `File(dir, entry.name)` / `File(dir, entry.entryName)` —
     antipattern zip-slip kinh điển trong tài liệu OWASP.
   - **Swift**: gọi `.extract(` (kiểu ZIPFoundation `Archive.extract`).
+  - `--format sarif`: xuất SARIF 2.1.0 thay vì text — nạp thẳng vào tab
+    Security của GitHub qua `github/codeql-action/upload-sarif`, xem mục
+    Tích hợp bên dưới.
 - [`semgrep/zip-slip-taint.yaml`](semgrep/): cùng 3 pattern trên nhưng bằng
   **taint analysis thật** (Semgrep) — track dữ liệu xuyên biến/method chain,
   không báo nhầm code đã có guard clause đúng (`if name.contains("..") { continue }`).
@@ -94,6 +103,13 @@ data-flow/taint analysis thật**. Cụ thể:
   file*, không xét scope/thứ tự gọi trước-sau — gọi guard ở 1 hàm khác trong
   cùng file vẫn hạ severity dù hàm chứa `by_index` không hề được guard.
 - Không có rule nào track được lời gọi qua nhiều file/hàm (cross-function).
+- **Không phân biệt "đọc để kiểm tra" với "đọc để ghi ra đĩa".** Ví dụ thật,
+  không phải giả định: `cxf-audit scan-source src/` tự flag chính
+  `src/archive.rs` (nơi `scan_archive()` gọi `by_index()` để *đọc tên entry
+  và kiểm tra*, không hề ghi file nào ra đĩa) — vì rule chỉ nhìn thấy lời
+  gọi `by_index`, không biết giá trị trả về có bao giờ chạm tới
+  `File::create`/tương đương hay không. Đây chính xác là giới hạn mà lớp
+  taint analysis (`semgrep/`) giải quyết được còn `scan-source` thì không.
 
 Coi kết quả `scan-source` là **gợi ý cần xem lại bằng mắt**, không phải kết
 luận cuối cùng.
@@ -113,13 +129,14 @@ cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc th�
 cargo test
 ```
 
-32 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+41 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
 hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
 (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
 archive, không chỉ là suy đoán từ đọc spec), test cho zip-bomb limits và
-version-downgrade, cộng 8 test cho `scan-source` (dương tính + âm tính, cả
-3 ngôn ngữ).
+version-downgrade, 12 test cho `scan-source` (dương tính + âm tính, cả 3
+ngôn ngữ + HPKE mode + zip-bomb-in-source), cộng 5 test cho output SARIF
+(schema hợp lệ, rule dedup, level mapping).
 
 ## Tích hợp vào project của bạn
 
@@ -205,6 +222,29 @@ repo này), thêm vào workflow của bạn:
 - uses: dtolnay/rust-toolchain@stable
 - run: cargo install --path path/to/cxf-audit
 - run: cxf-audit scan path/to/fixtures/*.zip
+```
+
+### 4. GitHub Code Scanning (SARIF)
+
+`scan-source --format sarif` xuất SARIF 2.1.0 — nạp thẳng vào tab Security
+của GitHub, hiện inline trên PR, thay vì chỉ nằm trong log CI. Đã verify
+thật bằng workflow riêng
+([`.github/workflows/demo-sarif.yml`](.github/workflows/demo-sarif.yml),
+chạy tay qua `workflow_dispatch`) — quét `semgrep/fixtures/` (có finding đã
+biết trước) và xác nhận alert thật sự xuất hiện trong
+[Security → Code scanning](https://github.com/ptuan21/cxf-audit/security/code-scanning).
+**Cố ý không quét `src/` trong CI mặc định** — `scan-source` tự flag chính
+code của mình (xem mục Giới hạn ở trên), sẽ tạo alert "vĩnh viễn" gây hiểu
+lầm cho ai ghé thăm repo.
+
+```yaml
+- uses: actions/checkout@v4
+- run: cargo install --path path/to/cxf-audit
+- run: cxf-audit scan-source --format sarif src/ > results.sarif
+  continue-on-error: true   # đừng để bước scan fail cả job trước khi kịp upload
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
 ```
 
 ## Đóng góp

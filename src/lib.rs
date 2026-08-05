@@ -3,6 +3,7 @@ mod findings;
 mod guard;
 mod limits;
 mod sample;
+mod sarif;
 mod source_scan;
 mod version;
 
@@ -11,6 +12,7 @@ pub use findings::{Finding, Severity};
 pub use guard::{assert_safe_archive, assert_within_limits, GuardError};
 pub use limits::{check_resource_limits, ZipLimits};
 pub use sample::sample_header;
+pub use sarif::to_sarif;
 pub use source_scan::{scan_source, SourceFinding};
 pub use version::check_version_downgrade;
 

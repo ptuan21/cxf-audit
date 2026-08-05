@@ -4,7 +4,7 @@ use std::{
     process::ExitCode,
 };
 
-use cxf_audit::{scan_archive, scan_source, zipslip_poc_archive, Severity};
+use cxf_audit::{scan_archive, scan_source, to_sarif, zipslip_poc_archive, Severity};
 
 fn print_usage() {
     eprintln!(
@@ -12,7 +12,7 @@ fn print_usage() {
          Usage:\n  \
          cxf-audit gen-poc <output.zip> [traversal-entry-name]\n  \
          cxf-audit scan <archive.zip> [archive2.zip ...]\n  \
-         cxf-audit scan-source <file-or-dir> [file-or-dir2 ...]"
+         cxf-audit scan-source [--format text|sarif] <file-or-dir> [file-or-dir2 ...]"
     );
 }
 
@@ -111,16 +111,30 @@ fn main() -> ExitCode {
             }
         }
         Some("scan-source") => {
-            let roots = &args[2..];
-            if roots.is_empty() {
+            let mut format = "text";
+            let mut roots: Vec<&str> = Vec::new();
+            let mut rest = args[2..].iter();
+            while let Some(arg) = rest.next() {
+                if arg == "--format" {
+                    let Some(value) = rest.next() else {
+                        print_usage();
+                        return ExitCode::FAILURE;
+                    };
+                    format = value.as_str();
+                } else {
+                    roots.push(arg.as_str());
+                }
+            }
+            if roots.is_empty() || !["text", "sarif"].contains(&format) {
                 print_usage();
                 return ExitCode::FAILURE;
             }
+
             let mut files = Vec::new();
-            for root in roots {
+            for root in &roots {
                 collect_files(Path::new(root), &mut files);
             }
-            let mut any_findings = false;
+            let mut all_findings = Vec::new();
             for path in &files {
                 let Ok(content) = fs::read_to_string(path) else {
                     continue; // binary/non-UTF8 file — not a source file we scan, skip silently
@@ -128,19 +142,28 @@ fn main() -> ExitCode {
                 let Some(findings) = scan_source(path, &content) else {
                     continue; // extension not recognized (not .rs/.kt/.kts/.swift)
                 };
-                for f in &findings {
-                    any_findings = true;
+                all_findings.extend(findings);
+            }
+
+            let any_findings = !all_findings.is_empty();
+            if format == "sarif" {
+                let sarif = to_sarif(&all_findings);
+                println!("{}", serde_json::to_string_pretty(&sarif).unwrap());
+            } else {
+                for f in &all_findings {
                     let tag = match f.severity {
                         Severity::Critical => "CRITICAL",
                         Severity::Info => "INFO",
                     };
                     println!("{}:{}: [{tag}] {}", f.file, f.line, f.message);
                 }
+                if !any_findings {
+                    println!("Không phát hiện pattern đáng ngờ trong source đã quét.");
+                }
             }
             if any_findings {
                 ExitCode::FAILURE
             } else {
-                println!("Không phát hiện pattern đáng ngờ trong source đã quét.");
                 ExitCode::SUCCESS
             }
         }

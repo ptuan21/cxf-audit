@@ -1,0 +1,28 @@
+name: Demo SARIF upload
+
+# Manual only — scans semgrep/fixtures/ (deliberately vulnerable code, used
+# as a known-positive fixture elsewhere in this repo) to demonstrate/verify
+# the scan-source --format sarif -> GitHub Code Scanning pipeline actually
+# works end to end. Not wired into the default CI: running this against
+# src/ would surface a permanent false-positive alert (scan-source flags
+# its own by_index() calls in src/archive.rs — see README.md "Giới hạn").
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --path .
+      - run: cxf-audit scan-source --format sarif semgrep/fixtures/ > results.sarif
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

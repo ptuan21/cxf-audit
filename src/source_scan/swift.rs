@@ -54,6 +54,7 @@ pub fn scan(source: &str, file: &str) -> Vec<SourceFinding> {
                 "Gọi `.extract(` trực tiếp (kiểu ZIPFoundation Archive.extract) — API thô, \
                        tự bạn phải validate đường dẫn đích chống path traversal trước khi giải nén."
                     .to_string(),
+            rule_id: "swift-archive-extract-raw",
         });
     }
     findings

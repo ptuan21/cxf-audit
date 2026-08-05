@@ -15,6 +15,12 @@ pub struct SourceFinding {
     pub line: usize,
     pub severity: Severity,
     pub message: String,
+    /// Stable identifier for the rule that produced this finding — e.g.
+    /// `"rust-zip-raw-extraction"`. Constant across runs/versions of the
+    /// same rule, unlike `message` (free text). Needed for SARIF output
+    /// (`ruleId`), where tools like GitHub Code Scanning use it to group
+    /// and deduplicate results.
+    pub rule_id: &'static str,
 }
 
 /// Scans one source file's content for CXF/CXP-relevant unsafe patterns

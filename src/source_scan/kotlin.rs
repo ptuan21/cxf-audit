@@ -58,5 +58,6 @@ fn check_call(node: Node, source: &str, file: &str) -> Option<SourceFinding> {
                    dùng thẳng để tạo đường dẫn file, chưa thấy check path traversal (canonicalPath \
                    + startsWith) nào ở đây. Validate hoặc dùng entry name đã qua sanitize trước."
             .to_string(),
+        rule_id: "kotlin-zip-slip-file-constructor",
     })
 }

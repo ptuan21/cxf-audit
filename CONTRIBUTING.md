@@ -62,6 +62,17 @@ Mỗi ngôn ngữ là 1 file trong `src/source_scan/` (`rust.rs`, `kotlin.rs`,
   trong `Cargo.toml` — tất cả đang pin về `0.20.x` vì đó là dải chung duy
   nhất giữa rust/kotlin/swift ở thời điểm viết). Nếu không tương thích, cần
   đánh giá lại có đáng downgrade/tách hay không trước khi thêm.
+- **Mọi `SourceFinding` mới đều phải set `rule_id`** — chuỗi hằng, ổn định
+  qua các version (v.d. `"rust-hpke-unauthenticated-mode"`), dùng làm SARIF
+  `ruleId`. Thêm rule mới thì cũng phải thêm 1 nhánh tương ứng trong
+  `rule_description()` ở `src/sarif.rs`, không thì SARIF output vẫn chạy
+  được (fallback về mô tả chung `"cxf-audit finding"` — xem test
+  `unknown_rule_id_still_gets_a_generic_description_not_a_panic`) nhưng
+  kém hữu ích.
+- Trước khi merge rule mới, thử `cxf-audit scan-source src/` (thư mục source
+  của chính cxf-audit) — nếu rule tự flag chính mình (đã xảy ra với rule
+  zip-bomb, xem README mục Giới hạn), cân nhắc rule có quá rộng không, hoặc
+  chấp nhận và ghi rõ false positive đó trong docs thay vì âm thầm bỏ qua.
 
 ## Thêm 1 rule mới — taint analysis thật (`semgrep/`)
 

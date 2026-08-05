@@ -24,9 +24,14 @@ fn extract(bytes: &[u8]) {
 }
 "#;
         let findings = scan_source(Path::new("src/importer.rs"), source).unwrap();
-        assert_eq!(findings.len(), 1);
+        // 1 zip-slip finding (by_index) + 1 companion zip-bomb finding (no
+        // resource-limit guard anywhere in the file).
+        assert_eq!(findings.len(), 2);
         assert_eq!(findings[0].severity, Severity::Critical);
-        assert!(findings[0].line > 0);
+        assert!(findings[0].message.contains("by_index"));
+        assert_eq!(findings[1].severity, Severity::Info);
+        assert!(findings[1].message.contains("zip-bomb"));
+        assert!(findings[0].line > 0 && findings[1].line > 0);
     }
 
     #[test]
@@ -39,8 +44,78 @@ fn extract(bytes: &[u8]) {
 }
 "#;
         let findings = scan_source(Path::new("src/importer.rs"), source).unwrap();
+        // Still 2 findings: cxf_audit reference in file only downgrades the
+        // zip-slip finding's severity — it does not imply a resource-limit
+        // guard (that requires assert_within_limits/check_resource_limits/
+        // ZipLimits specifically), so the zip-bomb finding still fires.
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert_eq!(findings[1].severity, Severity::Info);
+    }
+
+    #[test]
+    fn no_bomb_finding_when_resource_limits_checked() {
+        let source = r#"
+fn extract(bytes: &[u8]) {
+    cxf_audit::assert_within_limits(bytes, &cxf_audit::ZipLimits::default()).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut file = archive.by_index(0).unwrap();
+}
+"#;
+        let findings = scan_source(Path::new("src/importer.rs"), source).unwrap();
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected only the zip-slip finding: {findings:?}"
+        );
+        assert!(!findings[0].message.contains("zip-bomb"));
+    }
+
+    #[test]
+    fn flags_unauthenticated_hpke_mode() {
+        let source = r#"
+fn build_params() -> HpkeParameters {
+    HpkeParameters {
+        mode: HpkeMode::Base,
+        kem: HpkeKem::DhX25519,
+        kdf: HpkeKdf::HkdfSha256,
+        aead: HpkeAead::Aes256Gcm,
+        key: None,
+    }
+}
+"#;
+        let findings = scan_source(Path::new("src/protocol.rs"), source).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Info);
+        assert!(findings[0].message.contains("HpkeMode::Base"));
+    }
+
+    #[test]
+    fn does_not_flag_authenticated_hpke_mode() {
+        let source = r#"
+fn build_params() -> HpkeParameters {
+    HpkeParameters {
+        mode: HpkeMode::Auth,
+        kem: HpkeKem::DhX25519,
+        kdf: HpkeKdf::HkdfSha256,
+        aead: HpkeAead::Aes256Gcm,
+        key: None,
+    }
+}
+"#;
+        let findings = scan_source(Path::new("src/protocol.rs"), source).unwrap();
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn does_not_flag_unrelated_enum_variant_named_base() {
+        let source = r#"
+fn pick(color: ColorMode) -> ColorMode {
+    ColorMode::Base
+}
+"#;
+        let findings = scan_source(Path::new("src/color.rs"), source).unwrap();
+        assert!(findings.is_empty());
     }
 
     #[test]
