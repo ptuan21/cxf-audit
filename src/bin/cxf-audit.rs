@@ -257,14 +257,11 @@ enum BrowseChoice {
 fn list_browse_entries(current: &Path, allow_dir_selection: bool) -> Vec<(String, BrowseChoice)> {
     let mut items = Vec::new();
     if let Some(parent) = current.parent() {
-        items.push((
-            ".. (lên thư mục cha)".to_string(),
-            BrowseChoice::Up(parent.to_path_buf()),
-        ));
+        items.push(("..".to_string(), BrowseChoice::Up(parent.to_path_buf())));
     }
     if allow_dir_selection {
         items.push((
-            format!("✅ Chọn thư mục này ({})", current.display()),
+            "[chọn thư mục này]".to_string(),
             BrowseChoice::SelectCurrentDir,
         ));
     }
@@ -279,9 +276,9 @@ fn list_browse_entries(current: &Path, allow_dir_selection: bool) -> Vec<(String
             continue; // same noise list as scan-source's own recursion
         }
         if path.is_dir() {
-            items.push((format!("📁 {name}/"), BrowseChoice::Descend(path)));
+            items.push((format!("{name}/"), BrowseChoice::Descend(path)));
         } else {
-            items.push((format!("   {name}"), BrowseChoice::PickFile(path)));
+            items.push((name, BrowseChoice::PickFile(path)));
         }
     }
     items
@@ -303,7 +300,7 @@ fn browse<R: BufRead, W: Write>(
     loop {
         let items = list_browse_entries(&current, allow_dir_selection);
         writeln!(out)?;
-        writeln!(out, "📂 {}", current.display())?;
+        writeln!(out, "Thư mục: {}", current.display())?;
         for (i, (label, _)) in items.iter().enumerate() {
             writeln!(out, "  {}) {label}", i + 1)?;
         }
@@ -595,8 +592,8 @@ mod tests {
         let entries = list_browse_entries(&dir, true);
         let labels: Vec<&str> = entries.iter().map(|(l, _)| l.as_str()).collect();
 
-        assert_eq!(labels[0], ".. (lên thư mục cha)");
-        assert!(labels[1].starts_with("✅ Chọn thư mục này"));
+        assert_eq!(labels[0], "..");
+        assert_eq!(labels[1], "[chọn thư mục này]");
         // a.rs before b.rs before z_subdir/ — read_dir sorted by file name.
         assert!(labels[2].contains("a.rs"));
         assert!(labels[3].contains("b.rs"));
@@ -608,7 +605,7 @@ mod tests {
     fn browse_without_dir_selection_omits_that_option() {
         let dir = temp_dir("browse-nodirselect");
         let entries = list_browse_entries(&dir, false);
-        assert!(!entries.iter().any(|(l, _)| l.starts_with("✅")));
+        assert!(!entries.iter().any(|(l, _)| l == "[chọn thư mục này]"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -627,8 +624,8 @@ mod tests {
     #[test]
     fn browse_selects_current_dir_via_numbered_choice() {
         let dir = temp_dir("browse-select");
-        // ".. " is item 1 (parent always exists under a temp dir), "✅
-        // Chọn thư mục này" is item 2 since the dir starts empty.
+        // ".." is item 1 (parent always exists under a temp dir),
+        // "[chọn thư mục này]" is item 2 since the dir starts empty.
         let mut input = Cursor::new(b"2\n".to_vec());
         let mut out = Vec::new();
         let picked = browse(&dir, true, &mut input, &mut out).unwrap().unwrap();
@@ -667,7 +664,7 @@ mod tests {
     #[test]
     fn interactive_menu_gen_poc_flow_creates_real_archive_via_browser() {
         let dir = temp_dir("menu-genpoc");
-        // "3" (gen-poc) -> browse: "2" (✅ select this empty dir, item 2
+        // "3" (gen-poc) -> browse: "2" (select this empty dir, item 2
         // after ".."), -> filename -> entry name (default) -> "q".
         let script = "3\n2\npoc.zip\n\nq\n";
         let input = Cursor::new(script.as_bytes().to_vec());
@@ -694,7 +691,7 @@ mod tests {
             "fn f(a: &mut zip::ZipArchive<std::fs::File>) { a.by_index(0).unwrap(); }",
         )
         .unwrap();
-        // "2" (scan-source) -> browse: ".." is item 1, "✅ select dir" is
+        // "2" (scan-source) -> browse: ".." is item 1, "select dir" is
         // item 2, "vuln.rs" is item 3 (only file, alphabetically first) ->
         // pick the file directly -> format (default) -> "q".
         let script = "2\n3\n\nq\n";

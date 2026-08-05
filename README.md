@@ -153,17 +153,17 @@ cxf-audit — chọn 1 việc:
   q) Thoát
 > 2
 
-📂 /Users/you/my-project
-  1) .. (lên thư mục cha)
-  2) ✅ Chọn thư mục này (/Users/you/my-project)
-  3) 📁 src/
-  4)    Cargo.toml
+Thư mục: /Users/you/my-project
+  1) ..
+  2) [chọn thư mục này]
+  3) src/
+  4) Cargo.toml
   0) Huỷ, quay lại menu chính
 >
 ```
 
 Điều hướng bằng số: gõ số thư mục để đi vào, `1` để lùi lại thư mục cha,
-hoặc chọn "✅ Chọn thư mục này" để quét cả thư mục hiện tại (scan-source
+hoặc chọn `[chọn thư mục này]` để quét cả thư mục hiện tại (scan-source
 chấp nhận cả file lẫn thư mục). `scan` archive dùng cùng trình duyệt nhưng
 không có tuỳ chọn "chọn thư mục" — phải chọn tới 1 file cụ thể vì archive
 luôn là 1 file.

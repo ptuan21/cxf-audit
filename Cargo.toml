@@ -1,6 +1,6 @@
 [package]
 name = "cxf-audit"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Auditing tool for CXF/CXP (Credential Exchange Format/Protocol) implementations: zip-slip/zip-bomb/version-downgrade checks on archives, plus syntactic + SARIF-capable source-code scanning for Rust/Kotlin/Swift."
 license = "MIT"
