@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Research tooling for auditing CXF/CXP (Credential Exchange Format/Protocol) implementations: zip-slip, zip-bomb, and version-downgrade checks."
 license = "MIT"
-publish = false
+repository = "https://github.com/ptuan21/cxf-audit"
+homepage = "https://github.com/ptuan21/cxf-audit"
+readme = "README.md"
+keywords = ["security", "cxf", "passkey", "zip-slip", "audit"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 zip = "8.6"
