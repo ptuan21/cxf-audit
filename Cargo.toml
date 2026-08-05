@@ -1,8 +1,8 @@
 [package]
 name = "cxf-audit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Research tooling for auditing CXF/CXP (Credential Exchange Format/Protocol) implementations: zip-slip, zip-bomb, and version-downgrade checks."
+description = "Auditing tool for CXF/CXP (Credential Exchange Format/Protocol) implementations: zip-slip/zip-bomb/version-downgrade checks on archives, plus syntactic + SARIF-capable source-code scanning for Rust/Kotlin/Swift."
 license = "MIT"
 repository = "https://github.com/ptuan21/cxf-audit"
 homepage = "https://github.com/ptuan21/cxf-audit"
