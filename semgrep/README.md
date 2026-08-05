@@ -62,3 +62,22 @@ pattern-sanitizers:
 semgrep --config zip-slip-taint.yaml path/to/your/code
 ./verify.sh   # smoke test trên fixtures/, cần semgrep đã cài
 ```
+
+## Pre-commit hook
+
+Không đóng gói hook riêng ở đây — dùng thẳng hook chính thức của Semgrep,
+trỏ tới file rule này. Đã verify thật bằng `pre-commit run` (không chỉ viết
+cho có): fail đúng file có pattern zip-slip, pass đúng file sạch. Repo của
+bạn thêm vào `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.172.0  # ghim version cụ thể
+    hooks:
+      - id: semgrep
+        args: ["--config", "path/to/zip-slip-taint.yaml", "--error"]
+```
+
+(`--error` bắt buộc — thiếu cờ này Semgrep exit code 0 dù có finding, hook
+sẽ luôn "Passed" kể cả khi phát hiện lỗ hổng.)

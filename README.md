@@ -163,6 +163,21 @@ repos:
 (`language: rust` trong `.pre-commit-hooks.yaml` khiến pre-commit tự
 `cargo install` binary — không cần cài `cxf-audit` sẵn trên máy dev.)
 
+**Muốn taint analysis thật (không chỉ syntactic) thay vì `cxf-audit-source-scan`?**
+Dùng hook chính thức của Semgrep, trỏ tới rule trong repo này — cũng đã
+verify bằng `pre-commit run` thật:
+
+```yaml
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.172.0
+    hooks:
+      - id: semgrep
+        args: ["--config", "https://raw.githubusercontent.com/ptuan21/cxf-audit/main/semgrep/zip-slip-taint.yaml", "--error"]
+```
+
+Xem [semgrep/README.md](semgrep/README.md) để biết vì sao có cả 2 lớp
+(syntactic + taint) thay vì chỉ 1.
+
 ### 3. CI (GitHub Actions)
 
 Repo này có sẵn `.github/workflows/ci.yml` (fmt + build + clippy -D warnings
