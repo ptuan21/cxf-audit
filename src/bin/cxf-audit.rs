@@ -1,19 +1,58 @@
 use std::{
-    env, fs,
+    fs,
+    io::{self, BufRead, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
 
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell};
 use cxf_audit::{scan_archive, scan_source, to_sarif, zipslip_poc_archive, Severity};
 
-fn print_usage() {
-    eprintln!(
-        "cxf-audit — CXF/CXP zip-slip + source-code scanner (research tool, xem README.md)\n\n\
-         Usage:\n  \
-         cxf-audit gen-poc <output.zip> [traversal-entry-name]\n  \
-         cxf-audit scan <archive.zip> [archive2.zip ...]\n  \
-         cxf-audit scan-source [--format text|sarif] <file-or-dir> [file-or-dir2 ...]"
-    );
+const DEFAULT_POC_ENTRY_NAME: &str = "../../../../tmp/cxf-audit-poc-marker";
+
+#[derive(Parser)]
+#[command(
+    name = "cxf-audit",
+    version,
+    about = "CXF/CXP zip-slip + source-code scanner (research tool, xem README.md)"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Tạo archive PoC zip có path traversal trong tên entry
+    GenPoc {
+        /// File zip sẽ tạo
+        out_path: PathBuf,
+        /// Tên entry (mặc định: path traversal marker)
+        entry_name: Option<String>,
+    },
+    /// Quét archive zip tìm path traversal trong tên entry
+    Scan {
+        /// 1 hoặc nhiều file archive
+        #[arg(required = true)]
+        archives: Vec<PathBuf>,
+    },
+    /// Quét source code (Rust/Kotlin/Swift) tìm pattern zip-slip
+    ScanSource {
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+        /// 1 hoặc nhiều file/thư mục (đệ quy)
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+    /// In shell completion script (bash/zsh/fish/...) ra stdout
+    Completions { shell: Shell },
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Sarif,
 }
 
 /// Directory names pruned while *recursing* — never applied to a path given
@@ -77,138 +116,249 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Scans one file, printing findings. Returns `true` if the file is clean.
-fn scan_one(path: &str) -> bool {
+/// Scans one archive, writing findings to `out`. Returns `Ok(true)` if the
+/// file is clean. Shared between the `scan` subcommand and the interactive
+/// menu so both go through identical logic.
+fn scan_one_archive(path: &Path, out: &mut impl Write) -> io::Result<bool> {
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("Lỗi đọc file {path}: {e}");
-            return false;
+            writeln!(out, "Lỗi đọc file {}: {e}", path.display())?;
+            return Ok(false);
         }
     };
     match scan_archive(&bytes) {
-        Ok(findings) if findings.is_empty() => true,
+        Ok(findings) if findings.is_empty() => Ok(true),
         Ok(findings) => {
             for f in &findings {
                 let tag = match f.severity {
                     Severity::Critical => "CRITICAL",
                     Severity::Info => "INFO",
                 };
-                println!("{path}: [{tag}] {} — {}", f.entry_name, f.message);
+                writeln!(
+                    out,
+                    "{}: [{tag}] {} — {}",
+                    path.display(),
+                    f.entry_name,
+                    f.message
+                )?;
             }
-            false
+            Ok(false)
         }
         Err(e) => {
-            eprintln!("Lỗi đọc archive {path}: {e}");
-            false
+            writeln!(out, "Lỗi đọc archive {}: {e}", path.display())?;
+            Ok(false)
+        }
+    }
+}
+
+/// Runs the source-code scan and writes results (text or SARIF) to `out`.
+/// Returns `Ok(true)` if nothing was flagged. Shared between the
+/// `scan-source` subcommand and the interactive menu.
+fn run_scan_source(
+    paths: &[PathBuf],
+    format: OutputFormat,
+    out: &mut impl Write,
+) -> io::Result<bool> {
+    let mut files = Vec::new();
+    for root in paths {
+        collect_files(root, &mut files);
+    }
+    let mut all_findings = Vec::new();
+    for path in &files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue; // binary/non-UTF8 file — not a source file we scan, skip silently
+        };
+        let Some(findings) = scan_source(path, &content) else {
+            continue; // extension not recognized (not .rs/.kt/.kts/.swift)
+        };
+        all_findings.extend(findings);
+    }
+
+    let any_findings = !all_findings.is_empty();
+    if format == OutputFormat::Sarif {
+        let sarif = to_sarif(&all_findings);
+        writeln!(out, "{}", serde_json::to_string_pretty(&sarif).unwrap())?;
+    } else {
+        for f in &all_findings {
+            let tag = match f.severity {
+                Severity::Critical => "CRITICAL",
+                Severity::Info => "INFO",
+            };
+            writeln!(out, "{}:{}: [{tag}] {}", f.file, f.line, f.message)?;
+        }
+        if !any_findings {
+            writeln!(
+                out,
+                "Không phát hiện pattern đáng ngờ trong source đã quét."
+            )?;
+        }
+    }
+    Ok(!any_findings)
+}
+
+/// Generates a zip-slip PoC archive, writing status to `out`. Returns
+/// `Ok(true)` on success. Shared between the `gen-poc` subcommand and the
+/// interactive menu.
+fn run_gen_poc(out_path: &Path, entry_name: &str, out: &mut impl Write) -> io::Result<bool> {
+    match zipslip_poc_archive(entry_name) {
+        Ok(bytes) => {
+            if let Err(e) = fs::write(out_path, bytes) {
+                writeln!(out, "Lỗi ghi file {}: {e}", out_path.display())?;
+                return Ok(false);
+            }
+            writeln!(
+                out,
+                "Đã tạo {} (entry name: {entry_name})",
+                out_path.display()
+            )?;
+            Ok(true)
+        }
+        Err(e) => {
+            writeln!(out, "Lỗi tạo archive: {e}")?;
+            Ok(false)
+        }
+    }
+}
+
+/// Writes `text`, flushes, then reads one line from `input`. Returns
+/// `Ok(None)` on EOF (e.g. piped stdin ran out, or the user's terminal
+/// closed) so callers can exit cleanly instead of looping forever.
+fn prompt<R: BufRead, W: Write>(
+    text: &str,
+    input: &mut R,
+    out: &mut W,
+) -> io::Result<Option<String>> {
+    write!(out, "{text}")?;
+    out.flush()?;
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim().to_string()))
+}
+
+/// Interactive menu for `cxf-audit` run with no subcommand — guides a user
+/// through the same operations the flag-based subcommands offer, without
+/// needing to remember any flag/subcommand names. Generic over
+/// input/output so tests can drive it with a scripted `Cursor<&[u8]>`
+/// instead of real stdin/stdout.
+fn run_interactive_menu<R: BufRead, W: Write>(mut input: R, out: &mut W) -> io::Result<ExitCode> {
+    loop {
+        writeln!(out)?;
+        writeln!(out, "cxf-audit — chọn 1 việc:")?;
+        writeln!(out, "  1) Scan archive zip tìm path traversal")?;
+        writeln!(out, "  2) Scan source code (Rust/Kotlin/Swift)")?;
+        writeln!(out, "  3) Tạo archive PoC zip-slip")?;
+        writeln!(out, "  q) Thoát")?;
+
+        let Some(choice) = prompt("> ", &mut input, out)? else {
+            return Ok(ExitCode::SUCCESS);
+        };
+
+        match choice.as_str() {
+            "1" => {
+                let Some(path_str) = prompt("Đường dẫn archive: ", &mut input, out)? else {
+                    return Ok(ExitCode::SUCCESS);
+                };
+                if path_str.is_empty() {
+                    continue;
+                }
+                if scan_one_archive(Path::new(&path_str), out)? {
+                    writeln!(out, "OK: không phát hiện path traversal.")?;
+                }
+            }
+            "2" => {
+                let Some(path_str) = prompt("Đường dẫn file/thư mục source: ", &mut input, out)?
+                else {
+                    return Ok(ExitCode::SUCCESS);
+                };
+                if path_str.is_empty() {
+                    continue;
+                }
+                let Some(format_str) =
+                    prompt("Format [text/sarif] (Enter = text): ", &mut input, out)?
+                else {
+                    return Ok(ExitCode::SUCCESS);
+                };
+                let format = if format_str == "sarif" {
+                    OutputFormat::Sarif
+                } else {
+                    OutputFormat::Text
+                };
+                run_scan_source(&[PathBuf::from(path_str)], format, out)?;
+            }
+            "3" => {
+                let Some(out_path_str) = prompt("File zip output: ", &mut input, out)? else {
+                    return Ok(ExitCode::SUCCESS);
+                };
+                if out_path_str.is_empty() {
+                    continue;
+                }
+                let Some(entry_name_input) =
+                    prompt("Entry name (Enter = mặc định): ", &mut input, out)?
+                else {
+                    return Ok(ExitCode::SUCCESS);
+                };
+                let entry_name = if entry_name_input.is_empty() {
+                    DEFAULT_POC_ENTRY_NAME.to_string()
+                } else {
+                    entry_name_input
+                };
+                run_gen_poc(Path::new(&out_path_str), &entry_name, out)?;
+            }
+            "q" | "quit" | "exit" => return Ok(ExitCode::SUCCESS),
+            "" => {}
+            other => writeln!(out, "Không hiểu lựa chọn '{other}', thử lại.")?,
         }
     }
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("gen-poc") => {
-            let Some(out_path) = args.get(2) else {
-                print_usage();
-                return ExitCode::FAILURE;
-            };
-            let entry_name = args
-                .get(3)
-                .map(String::as_str)
-                .unwrap_or("../../../../tmp/cxf-audit-poc-marker");
-            match zipslip_poc_archive(entry_name) {
-                Ok(bytes) => {
-                    if let Err(e) = fs::write(out_path, bytes) {
-                        eprintln!("Lỗi ghi file {out_path}: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                    println!("Đã tạo {out_path} (entry name: {entry_name})");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("Lỗi tạo archive: {e}");
-                    ExitCode::FAILURE
-                }
+    let cli = Cli::parse();
+    let mut stdout = io::stdout();
+
+    match cli.command {
+        Some(Command::GenPoc {
+            out_path,
+            entry_name,
+        }) => {
+            let entry_name = entry_name.unwrap_or_else(|| DEFAULT_POC_ENTRY_NAME.to_string());
+            match run_gen_poc(&out_path, &entry_name, &mut stdout) {
+                Ok(true) => ExitCode::SUCCESS,
+                _ => ExitCode::FAILURE,
             }
         }
-        Some("scan") => {
-            let paths = &args[2..];
-            if paths.is_empty() {
-                print_usage();
-                return ExitCode::FAILURE;
+        Some(Command::Scan { archives }) => {
+            let mut all_clean = true;
+            for path in &archives {
+                match scan_one_archive(path, &mut stdout) {
+                    Ok(clean) => all_clean &= clean,
+                    Err(_) => all_clean = false,
+                }
             }
-            let all_clean = paths.iter().map(String::as_str).fold(true, |acc, path| {
-                let clean = scan_one(path);
-                acc && clean
-            });
             if all_clean {
-                println!("Không phát hiện path traversal trong tên entry.");
+                let _ = writeln!(stdout, "Không phát hiện path traversal trong tên entry.");
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
             }
         }
-        Some("scan-source") => {
-            let mut format = "text";
-            let mut roots: Vec<&str> = Vec::new();
-            let mut rest = args[2..].iter();
-            while let Some(arg) = rest.next() {
-                if arg == "--format" {
-                    let Some(value) = rest.next() else {
-                        print_usage();
-                        return ExitCode::FAILURE;
-                    };
-                    format = value.as_str();
-                } else {
-                    roots.push(arg.as_str());
-                }
-            }
-            if roots.is_empty() || !["text", "sarif"].contains(&format) {
-                print_usage();
-                return ExitCode::FAILURE;
-            }
-
-            let mut files = Vec::new();
-            for root in &roots {
-                collect_files(Path::new(root), &mut files);
-            }
-            let mut all_findings = Vec::new();
-            for path in &files {
-                let Ok(content) = fs::read_to_string(path) else {
-                    continue; // binary/non-UTF8 file — not a source file we scan, skip silently
-                };
-                let Some(findings) = scan_source(path, &content) else {
-                    continue; // extension not recognized (not .rs/.kt/.kts/.swift)
-                };
-                all_findings.extend(findings);
-            }
-
-            let any_findings = !all_findings.is_empty();
-            if format == "sarif" {
-                let sarif = to_sarif(&all_findings);
-                println!("{}", serde_json::to_string_pretty(&sarif).unwrap());
-            } else {
-                for f in &all_findings {
-                    let tag = match f.severity {
-                        Severity::Critical => "CRITICAL",
-                        Severity::Info => "INFO",
-                    };
-                    println!("{}:{}: [{tag}] {}", f.file, f.line, f.message);
-                }
-                if !any_findings {
-                    println!("Không phát hiện pattern đáng ngờ trong source đã quét.");
-                }
-            }
-            if any_findings {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
+        Some(Command::ScanSource { format, paths }) => {
+            match run_scan_source(&paths, format, &mut stdout) {
+                Ok(true) => ExitCode::SUCCESS,
+                _ => ExitCode::FAILURE,
             }
         }
-        _ => {
-            print_usage();
-            ExitCode::FAILURE
+        Some(Command::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut stdout);
+            ExitCode::SUCCESS
+        }
+        None => {
+            let stdin = io::stdin();
+            run_interactive_menu(stdin.lock(), &mut stdout).unwrap_or(ExitCode::FAILURE)
         }
     }
 }
@@ -216,17 +366,41 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::{
+        io::Cursor,
+        sync::atomic::{AtomicU32, Ordering},
+    };
 
     /// Unique temp dir per test — avoids collisions when tests run in
     /// parallel (the default for `cargo test`).
     fn temp_dir(label: &str) -> PathBuf {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            env::temp_dir().join(format!("cxf-audit-test-{label}-{n}-{}", std::process::id()));
+        let dir = env_temp_dir().join(format!("cxf-audit-test-{label}-{n}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn env_temp_dir() -> PathBuf {
+        std::env::temp_dir()
+    }
+
+    #[test]
+    fn cli_parses_all_subcommands_without_panicking() {
+        // A regression check for the clap migration itself: every
+        // subcommand shape used elsewhere in this repo (pre-commit hooks,
+        // CI, README examples) must still parse.
+        Cli::try_parse_from(["cxf-audit", "gen-poc", "out.zip"]).unwrap();
+        Cli::try_parse_from(["cxf-audit", "gen-poc", "out.zip", "../evil"]).unwrap();
+        Cli::try_parse_from(["cxf-audit", "scan", "a.zip", "b.zip"]).unwrap();
+        Cli::try_parse_from(["cxf-audit", "scan-source", "src/"]).unwrap();
+        Cli::try_parse_from(["cxf-audit", "scan-source", "--format", "sarif", "src/"]).unwrap();
+        Cli::try_parse_from(["cxf-audit", "completions", "bash"]).unwrap();
+    }
+
+    #[test]
+    fn cli_rejects_scan_source_with_no_paths() {
+        assert!(Cli::try_parse_from(["cxf-audit", "scan-source"]).is_err());
     }
 
     #[test]
@@ -284,5 +458,76 @@ mod tests {
 
         assert_eq!(files, vec![root.join("real.rs")]);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn interactive_menu_quit_immediately_exits_cleanly() {
+        let input = Cursor::new(b"q\n".to_vec());
+        let mut out = Vec::new();
+        let code = run_interactive_menu(input, &mut out).unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("chọn 1 việc"));
+    }
+
+    #[test]
+    fn interactive_menu_exits_cleanly_on_eof_instead_of_looping_forever() {
+        let input = Cursor::new(Vec::new()); // immediate EOF, no "q" needed
+        let mut out = Vec::new();
+        let code = run_interactive_menu(input, &mut out).unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn interactive_menu_unknown_choice_reprompts_instead_of_exiting() {
+        let input = Cursor::new(b"nonsense\nq\n".to_vec());
+        let mut out = Vec::new();
+        let code = run_interactive_menu(input, &mut out).unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Không hiểu lựa chọn"));
+    }
+
+    #[test]
+    fn interactive_menu_gen_poc_flow_creates_real_archive() {
+        let dir = temp_dir("menu-genpoc");
+        let out_path = dir.join("poc.zip");
+        let script = format!("3\n{}\n\nq\n", out_path.display());
+        let input = Cursor::new(script.into_bytes());
+        let mut out = Vec::new();
+
+        let code = run_interactive_menu(input, &mut out).unwrap();
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(
+            out_path.exists(),
+            "gen-poc menu flow did not create the archive"
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(DEFAULT_POC_ENTRY_NAME));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn interactive_menu_scan_source_flow_finds_real_finding() {
+        let dir = temp_dir("menu-scansource");
+        fs::write(
+            dir.join("vuln.rs"),
+            "fn f(a: &mut zip::ZipArchive<std::fs::File>) { a.by_index(0).unwrap(); }",
+        )
+        .unwrap();
+        let script = format!("2\n{}\n\nq\n", dir.display());
+        let input = Cursor::new(script.into_bytes());
+        let mut out = Vec::new();
+
+        let code = run_interactive_menu(input, &mut out).unwrap();
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("by_index"),
+            "expected the real finding in menu output: {text}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

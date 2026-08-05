@@ -83,6 +83,9 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
   **taint analysis thật** (Semgrep) — track dữ liệu xuyên biến/method chain,
   không báo nhầm code đã có guard clause đúng (`if name.contains("..") { continue }`).
   Yêu cầu cài `semgrep` riêng, không phải 1 phần của binary `cxf-audit`.
+- Chạy `cxf-audit` không kèm subcommand → **menu tương tác**, khỏi cần nhớ
+  flag nào. `cxf-audit completions <bash|zsh|fish|...>` → in tab-completion
+  script cho shell.
 
 ## Giới hạn — đọc trước khi dùng
 
@@ -123,11 +126,38 @@ luận cuối cùng.
 
 ## Dùng thử (CLI)
 
+CLI dùng [clap](https://crates.io/crates/clap) — có sẵn `--help`/`--version`,
+error message chuẩn khi thiếu argument.
+
 ```sh
 cargo run -- gen-poc poc.zip                 # dùng entry name mặc định
 cargo run -- gen-poc poc.zip "../../etc/foo" # tuỳ chỉnh entry name
 cargo run -- scan poc.zip other.zip ...      # scan archive, exit code != 0 nếu có finding
 cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc thư mục, đệ quy)
+cargo run -- --help                          # xem tất cả subcommand
+```
+
+**Không nhớ subcommand nào?** Chạy `cxf-audit` không kèm gì — vào menu tương
+tác, chọn số và điền đường dẫn khi được hỏi (đã verify thật qua terminal,
+không chỉ test giả lập):
+
+```
+$ cxf-audit
+
+cxf-audit — chọn 1 việc:
+  1) Scan archive zip tìm path traversal
+  2) Scan source code (Rust/Kotlin/Swift)
+  3) Tạo archive PoC zip-slip
+  q) Thoát
+>
+```
+
+**Dùng CLI thường xuyên?** Bật tab-completion cho shell:
+
+```sh
+cxf-audit completions bash > /etc/bash_completion.d/cxf-audit   # hoặc
+cxf-audit completions zsh  > "${fpath[1]}/_cxf-audit"            # hoặc
+cxf-audit completions fish > ~/.config/fish/completions/cxf-audit.fish
 ```
 
 ## Test
@@ -136,7 +166,7 @@ cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc th�
 cargo test
 ```
 
-51 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+58 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
 hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
 (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
@@ -144,8 +174,10 @@ archive, không chỉ là suy đoán từ đọc spec), test cho zip-bomb limits
 version-downgrade, 17 test cho `scan-source` (dương tính + âm tính, cả 3
 ngôn ngữ + HPKE mode + zip-bomb-in-source + guard marker verify trên code
 thật từ 3 repo ngoài — georust/transitfeed, blockads-android, Modern-Apps,
-ZIPFoundation), 5 test cho collect_files (bỏ qua thư mục noise, không theo
-symlink cycle), cộng 5 test cho output SARIF
+ZIPFoundation), 5 test cho output SARIF, cộng 12 test cho CLI (parse mọi
+subcommand, `collect_files` bỏ qua thư mục noise/không theo symlink cycle,
+6 test cho menu tương tác — kể cả 2 test chạy trọn vẹn 1 luồng thật qua
+`std::io::Cursor` giả lập stdin, tạo file/tìm finding thật, không chỉ mock)
 (schema hợp lệ, rule dedup, level mapping).
 
 ## Tích hợp vào project của bạn

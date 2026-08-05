@@ -16,6 +16,8 @@ credential-exchange-format = "0.4"
 credential-exchange-protocol = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 # Pinned to 0.20.x: the only window where tree-sitter-rust/kotlin/swift's
 # own tree-sitter version requirements overlap (kotlin caps at <0.23, swift
 # 0.4.x wants ^0.20.4, rust 0.20.4 wants ~0.20.10). See CONTRIBUTING.md.
