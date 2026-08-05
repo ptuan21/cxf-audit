@@ -1,0 +1,80 @@
+rules:
+  - id: zip-slip-taint-rust
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Zip entry data (from ZipArchive::by_index/by_name) flows into
+      File::create without a path-traversal check — zip-slip. See
+      threat-model.md §2.4. Fix: validate the entry name (e.g. reject names
+      containing "..") before building a filesystem path from it, or use
+      cxf_audit::assert_safe_archive() on the whole archive up front.
+    metadata:
+      references:
+        - https://github.com/ptuan21/cxf-audit/blob/main/README.md#riêng-scan-source
+      category: security
+      cwe:
+        - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $ARCHIVE.by_index($I)
+              - pattern: $ARCHIVE.by_name($N)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fs::File::create($SINK)
+              - pattern: std::fs::File::create($SINK)
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $X.contains("..")
+          - focus-metavariable: $X
+        by-side-effect: true
+
+  - id: zip-slip-taint-kotlin
+    languages: [kotlin]
+    severity: ERROR
+    message: >-
+      Zip entry name flows into File(dir, name) without a path-traversal
+      check — the classic Java/Kotlin zip-slip antipattern (see OWASP). Fix:
+      validate the entry name (e.g. reject names containing "..") before
+      constructing the destination File.
+    metadata:
+      category: security
+      cwe:
+        - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    mode: taint
+    pattern-sources:
+      - pattern: $ENTRY.name
+    pattern-sinks:
+      - pattern: File($DIR, $NAME)
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $X.contains("..")
+          - focus-metavariable: $X
+        by-side-effect: true
+
+  - id: zip-slip-taint-swift
+    languages: [swift]
+    severity: ERROR
+    message: >-
+      Zip entry path flows into appendingPathComponent without a
+      path-traversal check — zip-slip (ZIPFoundation-style Archive usage).
+      Fix: validate the entry path (e.g. reject paths containing "..")
+      before building the destination URL. Most reliable when the entry's
+      path is bound to a local `let` before the check — see
+      semgrep/README.md.
+    metadata:
+      category: security
+      cwe:
+        - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    mode: taint
+    pattern-sources:
+      - pattern: $ENTRY.path
+    pattern-sinks:
+      - pattern: $DIR.appendingPathComponent($NAME)
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $X.contains("..")
+          - focus-metavariable: $X
+        by-side-effect: true

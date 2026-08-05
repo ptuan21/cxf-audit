@@ -7,9 +7,13 @@ Dashlane...). Quét cả 2 tầng:
 
 - **Dữ liệu**: archive CXF thật (zip-slip, zip-bomb) và protocol response
   (version downgrade).
-- **Source code** của dev tự implement CXF/CXP (Rust, Kotlin, Swift) — cảnh
-  báo pattern zip-slip kinh điển trước khi merge, không cần archive thật để
-  test.
+- **Source code** của dev tự implement CXF/CXP (Rust, Kotlin, Swift) — 2 lớp:
+  - `scan-source` (tree-sitter, syntactic): nhanh, không phụ thuộc gì thêm.
+  - [`semgrep/`](semgrep/) (Semgrep, **taint analysis thật**): theo dõi dữ
+    liệu xuyên biến/hàm, hiểu đúng guard clause — mạnh hơn `scan-source`
+    nhưng cần cài `semgrep`. Xem [semgrep/README.md](semgrep/README.md) cho
+    hành trình thử CodeQL trước (thất bại, lý do cụ thể) rồi mới ra được
+    Semgrep.
 
 Tách ra từ 1 project nghiên cứu bảo mật passkey-sync độc lập rộng hơn (threat
 model đầy đủ, các hướng khác đang điều tra) — project đó hiện chưa publish
@@ -53,6 +57,10 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
   - **Kotlin**: `File(dir, entry.name)` / `File(dir, entry.entryName)` —
     antipattern zip-slip kinh điển trong tài liệu OWASP.
   - **Swift**: gọi `.extract(` (kiểu ZIPFoundation `Archive.extract`).
+- [`semgrep/zip-slip-taint.yaml`](semgrep/): cùng 3 pattern trên nhưng bằng
+  **taint analysis thật** (Semgrep) — track dữ liệu xuyên biến/method chain,
+  không báo nhầm code đã có guard clause đúng (`if name.contains("..") { continue }`).
+  Yêu cầu cài `semgrep` riêng, không phải 1 phần của binary `cxf-audit`.
 
 ## Giới hạn — đọc trước khi dùng
 

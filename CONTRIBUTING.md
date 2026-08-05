@@ -63,6 +63,22 @@ Mỗi ngôn ngữ là 1 file trong `src/source_scan/` (`rust.rs`, `kotlin.rs`,
   nhất giữa rust/kotlin/swift ở thời điểm viết). Nếu không tương thích, cần
   đánh giá lại có đáng downgrade/tách hay không trước khi thêm.
 
+## Thêm 1 rule mới — taint analysis thật (`semgrep/`)
+
+`semgrep/zip-slip-taint.yaml` dùng Semgrep taint mode thật (không phải
+pattern-matching cú pháp như `scan-source`) — xem
+[semgrep/README.md](semgrep/README.md) để biết vì sao chọn Semgrep thay vì
+CodeQL (đã thử, thất bại vì giới hạn resolve trait method của CodeQL Rust,
+không phải lỗi có thể vá từ bên ngoài) và kỹ thuật `by-side-effect` +
+`focus-metavariable` cần dùng cho sanitizer dạng guard clause (`if bad(x) { return }`)
+— cách viết sanitizer "ngây thơ" trông hợp lý nhưng **không hoạt động**, đã
+verify bằng thực nghiệm.
+
+Thêm rule mới ở đây: viết rule + fixture có comment `// ruleid: <id>` (dòng
+phải bị flag) và `// ok: <id>` (dòng không được flag) trong
+`semgrep/fixtures/`, thêm dòng `check` tương ứng vào `semgrep/verify.sh`
+(không dùng `semgrep --test` — xem lý do trong semgrep/README.md).
+
 ## Báo cáo lỗ hổng thật tìm được bằng tool này
 
 Nếu bạn dùng `cxf-audit` và phát hiện 1 lỗ hổng **thật** ở 1 implementation
