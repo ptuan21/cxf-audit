@@ -74,14 +74,28 @@ Mỗi ngôn ngữ là 1 file trong `src/source_scan/` (`rust.rs`, `kotlin.rs`,
   zip-bomb, xem README mục Giới hạn), cân nhắc rule có quá rộng không, hoặc
   chấp nhận và ghi rõ false positive đó trong docs thay vì âm thầm bỏ qua.
 - **Test rule trên ít nhất 1 repo thật bên ngoài, không chỉ fixture tự viết.**
-  Cách này đã tìm ra 2 việc thật: (1) `scan-source .` tự tạo finding trùng
-  lặp qua `target/package/` do `cargo publish` để lại — sửa bằng cách bỏ
-  qua thư mục build-artifact khi đệ quy; (2) clone
-  `georust/transitfeed` (dự án Rust thật, dùng `by_index` để giải nén GTFS
-  zip) phát hiện rule zip-slip coi nhầm code đã an toàn (dùng
-  `Path::components().filter(Component::Normal)`, một kỹ thuật sanitize hợp
-  lệ) là nguy hiểm — mở rộng `SLIP_GUARD_MARKERS` để nhận diện thêm pattern
-  này. Cả 2 đều không tìm ra được nếu chỉ test trên fixture tự viết.
+  Cách này đã tìm ra nhiều việc thật, không cái nào lộ ra được nếu chỉ test
+  fixture tự viết:
+  - `scan-source .` tự tạo finding trùng lặp qua `target/package/` do
+    `cargo publish` để lại — sửa bằng cách bỏ qua thư mục build-artifact
+    khi đệ quy.
+  - `georust/transitfeed` (Rust, giải nén GTFS zip) — rule zip-slip coi
+    nhầm code đã an toàn (`Path::components().filter(Component::Normal)`)
+    là nguy hiểm.
+  - `pass-with-high-score/blockads-android` và `vayun-mathur/Modern-Apps`
+    (2 app Kotlin độc lập) — cả 2 dùng đúng kỹ thuật containment-check
+    chuẩn nhưng qua 2 API `java.io.File` khác nhau (`canonicalPath` vs
+    `canonicalFile`) — guard marker ban đầu chỉ nhận 1 trong 2, phải test
+    cả 2 repo mới lộ ra thiếu sót.
+  - `weichsel/ZIPFoundation` (chính thư viện) — hàm `unzipItem()` an toàn
+    của họ tự gọi `.extract()` "thô" bên trong sau khi đã check
+    `isContained(in:)` — rule ban đầu không phân biệt được raw API dùng để
+    *xây* wrapper an toàn với raw API dùng *không có* guard.
+  - `MrKai77/Loop` (macOS updater, Swift) — **true positive thật**: gọi
+    `archive.extract()` trực tiếp, không có bất kỳ check path traversal
+    nào. Không đưa code cụ thể của repo này vào test/docs công khai — xem
+    mục Báo cáo lỗ hổng thật bên dưới, áp dụng y hệt dù mình chỉ tình cờ
+    tìm thấy trong lúc test, không chủ đích tìm.
 
 ## Thêm 1 rule mới — taint analysis thật (`semgrep/`)
 

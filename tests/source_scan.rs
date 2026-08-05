@@ -215,6 +215,46 @@ fun makeConfig(destDir: File): File {
         let findings = scan_source(Path::new("Config.kt"), source).unwrap();
         assert!(findings.is_empty());
     }
+
+    /// Real-world case: pass-with-high-score/blockads-android's `ZipUtils.kt`
+    /// uses exactly this canonicalPath+startsWith containment check and is
+    /// safe (found by scanning that repo, then reading the flagged code by
+    /// hand — the string `.canonicalPath` includes `canonicalPath` as a
+    /// substring, matching the marker).
+    #[test]
+    fn downgrades_severity_when_canonical_path_and_starts_with_present() {
+        let source = r#"
+fun extract(destDir: File, canonicalDest: String, entry: ZipEntry) {
+    val entryFile = File(destDir, entry.name)
+    if (!entryFile.canonicalPath.startsWith(canonicalDest)) {
+        throw ZipExtractionException("Zip-slip detected")
+    }
+}
+"#;
+        let findings = scan_source(Path::new("ZipUtils.kt"), source).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
+
+    /// Real-world case: vayun-mathur/Modern-Apps's `UnzipWorker.kt` uses the
+    /// same containment check but via `canonicalFile` instead of
+    /// `canonicalPath` (both are standard `java.io.File` members) — the
+    /// first version of this guard marker only recognized `canonicalPath`
+    /// and still flagged this equally-safe variant as Critical.
+    #[test]
+    fn downgrades_severity_when_canonical_file_and_starts_with_present() {
+        let source = r#"
+fun extract(destDir: File, destDirCanonical: File, entry: ZipEntry) {
+    val entryFile = File(destDir, entry.name).canonicalFile
+    if (!entryFile.path.startsWith(destDirCanonical.path)) {
+        return
+    }
+}
+"#;
+        let findings = scan_source(Path::new("UnzipWorker.kt"), source).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
+    }
 }
 
 mod swift_rule {
@@ -233,6 +273,28 @@ func extract(archive: Archive, to destDir: URL) {
         let findings = scan_source(Path::new("Importer.swift"), source).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Critical);
+    }
+
+    /// Real-world case: ZIPFoundation's own `unzipItem(at:to:...)` calls
+    /// `.extract` internally but only after `entryURL.isContained(in:
+    /// destinationURL)` — found by scanning ZIPFoundation's own
+    /// `FileManager+ZIP.swift` and reading the flagged code by hand.
+    #[test]
+    fn downgrades_severity_when_is_contained_in_check_present() {
+        let source = r#"
+func unzipItem(at sourceURL: URL, to destinationURL: URL) throws {
+    for entry in archive {
+        let entryURL = destinationURL.appendingPathComponent(entry.path)
+        guard entryURL.isContained(in: destinationURL) else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        _ = try archive.extract(entry, to: entryURL)
+    }
+}
+"#;
+        let findings = scan_source(Path::new("FileManager+ZIP.swift"), source).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Info);
     }
 
     #[test]

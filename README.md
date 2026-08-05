@@ -70,8 +70,12 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
     KEM (RFC 9180), an toàn phụ thuộc hoàn toàn vào chữ ký challenge riêng
     (§2.3 threat model).
   - **Kotlin**: `File(dir, entry.name)` / `File(dir, entry.entryName)` —
-    antipattern zip-slip kinh điển trong tài liệu OWASP.
-  - **Swift**: gọi `.extract(` (kiểu ZIPFoundation `Archive.extract`).
+    antipattern zip-slip kinh điển trong tài liệu OWASP. Hạ severity nếu
+    file có check containment kiểu `canonicalPath`/`canonicalFile` +
+    `startsWith` (xác nhận cả 2 biến thể từ 2 codebase Kotlin thật độc lập).
+  - **Swift**: gọi `.extract(` (kiểu ZIPFoundation `Archive.extract`). Hạ
+    severity nếu file có `isContained(in:` — chính API containment-check
+    ZIPFoundation dùng nội bộ trong `unzipItem()` của họ.
   - `--format sarif`: xuất SARIF 2.1.0 thay vì text — nạp thẳng vào tab
     Security của GitHub qua `github/codeql-action/upload-sarif`, xem mục
     Tích hợp bên dưới.
@@ -132,13 +136,16 @@ cargo run -- scan-source src/ Importer.kt    # scan source code (file hoặc th�
 cargo test
 ```
 
-41 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
+51 test, bao gồm cả trường hợp biên: archive rỗng, nhiều entry (chỉ entry
 độc hại bị flag), Windows-style path không có ổ đĩa, input không phải zip
 hợp lệ, test khẳng định `zip` crate **không** tự sanitize tên entry khi ghi
 (xác nhận thực nghiệm rằng nguy cơ zip-slip tồn tại thật ở tầng thư viện
 archive, không chỉ là suy đoán từ đọc spec), test cho zip-bomb limits và
-version-downgrade, 12 test cho `scan-source` (dương tính + âm tính, cả 3
-ngôn ngữ + HPKE mode + zip-bomb-in-source), cộng 5 test cho output SARIF
+version-downgrade, 17 test cho `scan-source` (dương tính + âm tính, cả 3
+ngôn ngữ + HPKE mode + zip-bomb-in-source + guard marker verify trên code
+thật từ 3 repo ngoài — georust/transitfeed, blockads-android, Modern-Apps,
+ZIPFoundation), 5 test cho collect_files (bỏ qua thư mục noise, không theo
+symlink cycle), cộng 5 test cho output SARIF
 (schema hợp lệ, rule dedup, level mapping).
 
 ## Tích hợp vào project của bạn
