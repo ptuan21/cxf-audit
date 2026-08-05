@@ -4,6 +4,9 @@
 [![CI](https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**[ptuan21.github.io/cxf-audit](https://ptuan21.github.io/cxf-audit/)** — trang
+giới thiệu dự án, kèm hành trình kỹ thuật CodeQL thất bại → Semgrep thành công.
+
 Scanner cho lỗ hổng trong implementation CXF/CXP (Credential Exchange
 Format/Protocol) — chuẩn FIDO Alliance cho phép di chuyển passkey/password
 giữa các trình quản lý mật khẩu (Apple, Google, 1Password, Bitwarden,
