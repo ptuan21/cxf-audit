@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cxf-audit — zip-slip &amp; taint analysis for CXF/CXP</title>
+<meta name="description" content="A focused security tool for auditing CXF/CXP (FIDO passkey exchange) implementations: archive scanning, syntactic source checks, and real taint analysis for Rust, Kotlin, and Swift.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0b0d12;
+    --bg-panel: #12151c;
+    --bg-panel-2: #171b24;
+    --fg: #e7e9ee;
+    --fg-dim: #9aa1b0;
+    --border: #262b36;
+    --accent: #6ee7a8;
+    --accent-2: #7aa8ff;
+    --danger: #ff8a8a;
+    --code-bg: #0e1016;
+    --radius: 10px;
+    --max: 840px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fbfbfd;
+      --bg-panel: #ffffff;
+      --bg-panel-2: #f4f5f8;
+      --fg: #14161c;
+      --fg-dim: #565c6b;
+      --border: #e3e5ea;
+      --accent: #0f8a4d;
+      --accent-2: #2b5fd9;
+      --danger: #c23b3b;
+      --code-bg: #f4f5f8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0d12; --bg-panel: #12151c; --bg-panel-2: #171b24; --fg: #e7e9ee;
+    --fg-dim: #9aa1b0; --border: #262b36; --accent: #6ee7a8; --accent-2: #7aa8ff;
+    --danger: #ff8a8a; --code-bg: #0e1016;
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfbfd; --bg-panel: #ffffff; --bg-panel-2: #f4f5f8; --fg: #14161c;
+    --fg-dim: #565c6b; --border: #e3e5ea; --accent: #0f8a4d; --accent-2: #2b5fd9;
+    --danger: #c23b3b; --code-bg: #f4f5f8;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+  }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+  pre code { background: none; border: none; padding: 0; }
+
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+  header.hero {
+    border-bottom: 1px solid var(--border);
+    padding: 64px 0 44px;
+  }
+  .badges { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+  .badges img { display: block; height: 20px; }
+  h1 {
+    font-size: clamp(28px, 5vw, 40px);
+    line-height: 1.15;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+  h1 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .tagline { font-size: 1.15em; color: var(--fg-dim); max-width: 62ch; margin: 0 0 26px; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.95em;
+  }
+  .btn:hover { text-decoration: none; border-color: var(--accent-2); }
+  .btn.primary { background: var(--accent); color: #06210f; border-color: transparent; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  section { padding: 52px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  h2 {
+    font-size: 1.5em;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .eyebrow {
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  .lede { color: var(--fg-dim); max-width: 68ch; margin: 0 0 30px; }
+
+  .layers { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 720px) { .layers { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 1.02em; }
+  .card p { margin: 0; color: var(--fg-dim); font-size: 0.94em; }
+  .card .tag {
+    display: inline-block;
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin-bottom: 10px;
+  }
+
+  .timeline { position: relative; margin-top: 8px; }
+  .step {
+    position: relative;
+    padding: 0 0 30px 30px;
+    border-left: 2px solid var(--border);
+  }
+  .step:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .step::before {
+    content: "";
+    position: absolute;
+    left: -7px; top: 2px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 2px solid var(--fg-dim);
+  }
+  .step.fail::before { border-color: var(--danger); }
+  .step.win::before { border-color: var(--accent); background: var(--accent); }
+  .step h3 { margin: 0 0 6px; font-size: 1.05em; }
+  .step h3 .status { font-size: 0.7em; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .step.fail h3 .status { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
+  .step.win h3 .status { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .step p { margin: 0 0 10px; color: var(--fg-dim); }
+  .step p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.92em; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--fg-dim); font-weight: 600; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.03em; }
+  .yes { color: var(--accent); }
+  .no { color: var(--danger); }
+
+  footer { padding: 40px 0 60px; color: var(--fg-dim); font-size: 0.9em; }
+  footer a { color: var(--fg); }
+  .foot-links { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
+
+  ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="badges">
+      <a href="https://crates.io/crates/cxf-audit"><img src="https://img.shields.io/crates/v/cxf-audit.svg" alt="crates.io version"></a>
+      <a href="https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml"><img src="https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+      <a href="https://github.com/ptuan21/cxf-audit/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+    </div>
+    <h1><span class="mono">cxf-audit</span></h1>
+    <p class="tagline">
+      A narrow, deep security tool for CXF/CXP — FIDO Alliance's standard for
+      moving passkeys between password managers. Catches zip-slip, zip-bomb,
+      and protocol downgrade issues, from raw archive bytes down to real
+      taint analysis of your Rust, Kotlin, and Swift implementation code.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/ptuan21/cxf-audit">View on GitHub</a>
+      <a class="btn" href="https://crates.io/crates/cxf-audit">cargo add cxf-audit</a>
+      <a class="btn" href="#journey">Read the CodeQL vs. Semgrep story ↓</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Why this exists</p>
+    <h2>CXF packages credentials as a zip. The spec doesn't say how to sanitize entry names.</h2>
+    <p class="lede">
+      CXF (Credential Exchange Format) exports passkeys/passwords as
+      individually-encrypted files inside a zip archive. Per spec, a
+      credential's identifier <em>is</em> its file name in that archive —
+      and nothing in the spec says how an importer must sanitize that value
+      before writing it to disk. That's the exact setup for zip-slip.
+      <code>cxf-audit</code> exists to catch it before it ships, at every
+      layer where it could hide.
+    </p>
+
+    <div class="layers">
+      <div class="card">
+        <span class="tag">Data</span>
+        <h3>Archive &amp; protocol</h3>
+        <p><code>scan</code> / <code>assert_safe_archive()</code> flags
+        path-traversal entry names and zip-bomb sizing in real CXF archives;
+        <code>check_version_downgrade()</code> catches silent CXP protocol
+        downgrades.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Syntax</span>
+        <h3>scan-source (tree-sitter)</h3>
+        <p>Parses your Rust/Kotlin/Swift source with real grammars — not
+        regex — and flags known zip-slip antipatterns per language. No
+        external tools required.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Dataflow</span>
+        <h3>Real taint analysis</h3>
+        <p>Semgrep rules that track tainted zip entry data through
+        variables and method chains to the sink, and correctly recognize a
+        proper guard-clause check as safe.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="journey">
+  <div class="wrap">
+    <p class="eyebrow">Engineering journal</p>
+    <h2>We tried CodeQL first. It failed for a specific, verifiable reason.</h2>
+    <p class="lede">
+      Most write-ups skip the dead end. This one doesn't — the failure is
+      more informative than the feature.
+    </p>
+
+    <div class="timeline">
+      <div class="step fail">
+        <h3>CodeQL Rust <span class="status">Dead end</span></h3>
+        <p>
+          CodeQL's Rust support (GA since Oct 2025) already ships a
+          purpose-built <code>DotDotCheck</code> sanitizer for exactly
+          <code>.contains("..")</code>, plus pre-modeled sinks/summaries for
+          <code>File::create</code> and <code>Path::join</code>. Should have
+          been a five-minute win. It found nothing.
+        </p>
+        <p>
+          Root cause, found by reading <code>FlowSummaryImpl.qll</code> and
+          probing a real database directly:
+          <code>getStaticTarget()</code> couldn't resolve
+          <code>.by_index()</code> at all. Isolated with a pure local
+          generic struct (no third-party crate) — its own inherent method
+          resolved fine, but <code>.clone()</code> and
+          <code>.to_uppercase()</code> — the most ordinary trait methods in
+          Rust — didn't. Not a <code>zip</code>-crate quirk; a real,
+          current gap in trait-method resolution. And unfixable from the
+          outside: flow-summary models only attach <em>after</em> a call
+          resolves, confirmed straight from the source.
+        </p>
+      </div>
+
+      <div class="step">
+        <h3>Semgrep taint mode <span class="status">Partial win</span></h3>
+        <p>
+          No full type resolution needed — closer to tracking assignments
+          syntactically. First test: does taint flow from
+          <code>.by_index()</code> through <code>.unwrap()</code>,
+          <code>.name()</code>, <code>.to_string()</code>,
+          <code>Path::join()</code>, to <code>File::create()</code>? Yes,
+          clean, on the first try.
+        </p>
+      </div>
+
+      <div class="step fail">
+        <h3>The obvious sanitizer syntax <span class="status">Also wrong</span></h3>
+        <p>
+          <code>pattern-sanitizers: [{pattern: $X.contains("..")}]</code>
+          flagged the <em>safe</em> function too. Cross-checked against
+          Python (Semgrep's most mature taint language) with the identical
+          rule shape — same failure. Not a Rust gap: basic
+          <code>pattern-sanitizers</code> clears taint from the matched
+          expression itself (an unused boolean), not from the variable
+          being checked.
+        </p>
+      </div>
+
+      <div class="step win">
+        <h3>by-side-effect + focus-metavariable <span class="status">Fixed it</span></h3>
+        <p>
+          The actual mechanism: mark the <em>variable</em> sanitized at the
+          call site, not the call's return value.
+        </p>
+        <pre><code>pattern-sanitizers:
+  - patterns:
+      - pattern: $X.contains("..")
+      - focus-metavariable: $X
+    by-side-effect: true</code></pre>
+        <p>
+          Verified working end-to-end in Rust, Kotlin, and Swift (Swift
+          needed one adjustment — bind <code>entry.path</code> to a local
+          <code>let</code> before checking it; inline property-access
+          checks didn't trigger reliably).
+        </p>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Question</th><th>CodeQL</th><th>Semgrep</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Real cross-variable dataflow?</td>
+          <td class="no">✗ broke at resolution</td>
+          <td class="yes">✓ worked first try</td>
+        </tr>
+        <tr>
+          <td>Guard-clause sanitizer recognized?</td>
+          <td>Had the right class, never reached</td>
+          <td class="yes">✓ with by-side-effect</td>
+        </tr>
+        <tr>
+          <td>Root cause identified from source, not guessed</td>
+          <td class="yes">✓</td>
+          <td class="yes">✓</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p style="color:var(--fg-dim); font-size:0.92em;">
+      Full trail — exact queries, probe scripts, and the fixture code — is
+      in <a href="https://github.com/ptuan21/cxf-audit/blob/main/semgrep/README.md">semgrep/README.md</a>.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Get started</p>
+    <h2>Three ways to integrate, all verified end-to-end</h2>
+    <pre><code># As a library, embed in your own CXF/CXP importer:
+cargo add cxf-audit
+
+# As a CLI:
+cxf-audit scan archive.zip
+cxf-audit scan-source src/
+
+# As a pre-commit hook (archive + source-scan, or Semgrep taint rules):
+# see README.md for the full .pre-commit-config.yaml</code></pre>
+    <p class="lede" style="margin-top:20px;">
+      Every integration claim in the README was actually run — pre-commit
+      hooks tested with <code>pre-commit try-repo</code>/<code>pre-commit run</code>,
+      CI verified green on real GitHub Actions runners, the git and
+      crates.io dependency snippets tested from a separate scratch project.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/ptuan21/cxf-audit">GitHub</a>
+      <a href="https://crates.io/crates/cxf-audit">crates.io</a>
+      <a href="https://github.com/ptuan21/cxf-audit/blob/main/README.md">README</a>
+      <a href="https://github.com/ptuan21/cxf-audit/blob/main/CONTRIBUTING.md">Contributing</a>
+    </div>
+    <p>MIT licensed. Not affiliated with the FIDO Alliance or any password manager vendor.</p>
+  </div>
+</footer>
+
+</body>
+</html>
