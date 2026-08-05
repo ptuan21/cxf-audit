@@ -118,11 +118,16 @@ repos:
 (`language: rust` trong `.pre-commit-hooks.yaml` khiến pre-commit tự
 `cargo install` binary — không cần cài `cxf-audit` sẵn trên máy dev.)
 
-### 3. CI (GitHub Actions) — ví dụ, chưa tự chạy thử trong CI thật
+### 3. CI (GitHub Actions)
 
-Chưa có pipeline CI thật để verify end-to-end, nên đây chỉ là snippet ví dụ
-dựng từ các action chuẩn (`actions/checkout`, `dtolnay/rust-toolchain`) —
-bạn nên tự thử trong repo của mình trước khi tin tưởng hoàn toàn:
+Repo này có sẵn `.github/workflows/ci.yml` (fmt + build + clippy -D warnings
++ test) — cú pháp đã verify bằng `actionlint`, và từng bước đã chạy xanh
+local. **Giới hạn còn lại:** chưa tự chạy trên runner GitHub Actions thật vì
+repo chưa được push lên GitHub — nên chưa loại trừ hoàn toàn khả năng có vấn
+đề riêng của môi trường runner (network, cache action...).
+
+Nếu bạn dùng `cxf-audit` như dependency trong project khác (không phải fork
+repo này), thêm vào workflow của bạn:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -130,3 +135,13 @@ bạn nên tự thử trong repo của mình trước khi tin tưởng hoàn to�
 - run: cargo install --path path/to/cxf-audit
 - run: cxf-audit scan path/to/fixtures/*.zip
 ```
+
+## Đóng góp
+
+Xem [CONTRIBUTING.md](CONTRIBUTING.md) — bao gồm cả chính sách nếu bạn tìm
+được lỗ hổng thật ở 1 vendor cụ thể bằng tool này (không phải mở issue ở
+đây).
+
+## License
+
+MIT — xem [LICENSE](LICENSE).

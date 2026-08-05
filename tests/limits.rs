@@ -1,4 +1,6 @@
-use cxf_audit::{assert_within_limits, build_archive, check_resource_limits, GuardError, ZipLimits};
+use cxf_audit::{
+    assert_within_limits, build_archive, check_resource_limits, GuardError, ZipLimits,
+};
 
 fn tiny_limits() -> ZipLimits {
     ZipLimits {
@@ -34,8 +36,12 @@ fn flags_declared_uncompressed_size_over_limit() {
 #[test]
 fn flags_both_when_both_exceeded() {
     let big_content = vec![b'x'; 50];
-    let archive =
-        build_archive(&[("a", &big_content), ("b", &big_content), ("c", &big_content)]).unwrap();
+    let archive = build_archive(&[
+        ("a", &big_content),
+        ("b", &big_content),
+        ("c", &big_content),
+    ])
+    .unwrap();
     let findings = check_resource_limits(&archive, &tiny_limits()).unwrap();
     assert_eq!(findings.len(), 2);
 }

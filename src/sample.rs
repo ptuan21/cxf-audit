@@ -1,6 +1,6 @@
 use credential_exchange_format::{
-    Account, Credential, EditableField, EditableFieldString, Header, Item, NoteCredential,
-    Version, B64Url,
+    Account, B64Url, Credential, EditableField, EditableFieldString, Header, Item, NoteCredential,
+    Version,
 };
 
 /// A minimal, spec-shaped CXF export document. This is a plaintext placeholder,

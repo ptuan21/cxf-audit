@@ -27,7 +27,10 @@ impl Default for ZipLimits {
 /// in the sense that a lying header is itself the signal callers should
 /// reject before extracting — this function does not need to trust it any
 /// further than that.
-pub fn check_resource_limits(bytes: &[u8], limits: &ZipLimits) -> zip::result::ZipResult<Vec<Finding>> {
+pub fn check_resource_limits(
+    bytes: &[u8],
+    limits: &ZipLimits,
+) -> zip::result::ZipResult<Vec<Finding>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
     let mut findings = Vec::new();
 

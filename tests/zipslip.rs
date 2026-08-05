@@ -2,9 +2,11 @@ use cxf_audit::{build_archive, scan_archive, zipslip_poc_archive, Severity};
 
 #[test]
 fn flags_parent_directory_traversal() {
-    let archive =
-        build_archive(&[("../../../etc/cron.d/evil", b"* * * * * root touch /tmp/pwned")])
-            .unwrap();
+    let archive = build_archive(&[(
+        "../../../etc/cron.d/evil",
+        b"* * * * * root touch /tmp/pwned",
+    )])
+    .unwrap();
     let findings = scan_archive(&archive).unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].severity, Severity::Critical);
@@ -52,8 +54,7 @@ fn empty_archive_has_no_findings() {
 
 #[test]
 fn multiple_entries_only_flags_malicious_one() {
-    let archive =
-        build_archive(&[("legit.jwe", b"data"), ("../evil.jwe", b"data")]).unwrap();
+    let archive = build_archive(&[("legit.jwe", b"data"), ("../evil.jwe", b"data")]).unwrap();
     let findings = scan_archive(&archive).unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].entry_name, "../evil.jwe");
@@ -70,7 +71,10 @@ fn zipslip_poc_archive_is_flagged_by_scan_archive() {
     let poc = zipslip_poc_archive("../../../../tmp/cxf-audit-poc-marker").unwrap();
     let findings = scan_archive(&poc).unwrap();
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].entry_name, "../../../../tmp/cxf-audit-poc-marker");
+    assert_eq!(
+        findings[0].entry_name,
+        "../../../../tmp/cxf-audit-poc-marker"
+    );
 }
 
 #[test]
