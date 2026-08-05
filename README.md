@@ -1,5 +1,9 @@
 # cxf-audit
 
+[![Crates.io](https://img.shields.io/crates/v/cxf-audit.svg)](https://crates.io/crates/cxf-audit)
+[![CI](https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/ptuan21/cxf-audit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Scanner cho lỗ hổng trong implementation CXF/CXP (Credential Exchange
 Format/Protocol) — chuẩn FIDO Alliance cho phép di chuyển passkey/password
 giữa các trình quản lý mật khẩu (Apple, Google, 1Password, Bitwarden,
@@ -122,10 +126,17 @@ runtime) hay chỉ muốn CI/pre-commit tự động soát các file test/fixtur
 
 ### 1. Làm thư viện Rust — chặn ngay trong code import của bạn (khuyến nghị nếu bạn tự viết importer)
 
+Đã publish lên crates.io — [crates.io/crates/cxf-audit](https://crates.io/crates/cxf-audit):
+
+```sh
+cargo add cxf-audit
+```
+
+Hoặc trỏ thẳng git nếu muốn bản mới nhất chưa release:
+
 ```toml
-# Cargo.toml của bạn (chưa publish lên crates.io, dùng git trực tiếp)
 [dependencies]
-cxf-audit = { git = "https://github.com/ptuan21/cxf-audit", rev = "c1368fb" }
+cxf-audit = { git = "https://github.com/ptuan21/cxf-audit" }
 ```
 
 ```rust
