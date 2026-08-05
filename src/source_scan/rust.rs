@@ -6,6 +6,15 @@ use crate::Severity;
 const DANGEROUS_METHODS: &[&str] = &["by_index", "by_name"];
 const BOMB_GUARD_MARKERS: &[&str] = &["check_resource_limits", "assert_within_limits", "ZipLimits"];
 const UNAUTHENTICATED_HPKE_MODES: &[&str] = &["Base", "Psk"];
+/// Same-file markers that downgrade the zip-slip finding's severity: not
+/// just our own `cxf_audit` helpers, but known-legitimate hand-rolled
+/// sanitization idioms — `Component::Normal` filtering (the standard
+/// std-library-only way to strip `..`/absolute-path components from an
+/// untrusted path, confirmed against a real external crate,
+/// georust/transitfeed's `sanitize_filename`, which uses exactly this and
+/// is NOT vulnerable) and a literal `.contains("..")` check (weaker, but
+/// the same idiom this tool's own Kotlin/Swift rules treat as a guard).
+const SLIP_GUARD_MARKERS: &[&str] = &["cxf_audit", "Component::Normal", ".contains(\"..\")"];
 
 const CALL_QUERY: &str = r#"
 (call_expression
@@ -53,7 +62,7 @@ fn scan_zip_calls(tree: &tree_sitter::Tree, source: &str, file: &str) -> Vec<Sou
     let call_idx = query.capture_index_for_name("call").unwrap();
     let method_idx = query.capture_index_for_name("method").unwrap();
 
-    let looks_slip_guarded = source.contains("cxf_audit");
+    let looks_slip_guarded = SLIP_GUARD_MARKERS.iter().any(|m| source.contains(m));
     let looks_bomb_guarded = BOMB_GUARD_MARKERS.iter().any(|m| source.contains(m));
 
     let mut findings = Vec::new();
@@ -87,7 +96,8 @@ fn scan_zip_calls(tree: &tree_sitter::Tree, source: &str, file: &str) -> Vec<Sou
                  tên entry chống path traversal trước khi ghi file. Cân nhắc dùng \
                  cxf_audit::assert_safe_archive() thay vì tự viết lại.{}",
                 if looks_slip_guarded {
-                    " (file này có tham chiếu cxf_audit ở đâu đó — có thể đã guard, hạ severity)"
+                    " (file này có tham chiếu cxf_audit, lọc Component::Normal, hoặc check \
+                       .contains(\"..\") ở đâu đó — có thể đã guard, hạ severity)"
                 } else {
                     ""
                 }

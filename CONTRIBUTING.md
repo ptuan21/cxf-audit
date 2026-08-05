@@ -73,6 +73,15 @@ Mỗi ngôn ngữ là 1 file trong `src/source_scan/` (`rust.rs`, `kotlin.rs`,
   của chính cxf-audit) — nếu rule tự flag chính mình (đã xảy ra với rule
   zip-bomb, xem README mục Giới hạn), cân nhắc rule có quá rộng không, hoặc
   chấp nhận và ghi rõ false positive đó trong docs thay vì âm thầm bỏ qua.
+- **Test rule trên ít nhất 1 repo thật bên ngoài, không chỉ fixture tự viết.**
+  Cách này đã tìm ra 2 việc thật: (1) `scan-source .` tự tạo finding trùng
+  lặp qua `target/package/` do `cargo publish` để lại — sửa bằng cách bỏ
+  qua thư mục build-artifact khi đệ quy; (2) clone
+  `georust/transitfeed` (dự án Rust thật, dùng `by_index` để giải nén GTFS
+  zip) phát hiện rule zip-slip coi nhầm code đã an toàn (dùng
+  `Path::components().filter(Component::Normal)`, một kỹ thuật sanitize hợp
+  lệ) là nguy hiểm — mở rộng `SLIP_GUARD_MARKERS` để nhận diện thêm pattern
+  này. Cả 2 đều không tìm ra được nếu chỉ test trên fixture tự viết.
 
 ## Thêm 1 rule mới — taint analysis thật (`semgrep/`)
 

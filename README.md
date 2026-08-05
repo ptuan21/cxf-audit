@@ -58,8 +58,11 @@ implementer nào đó bỏ sót bước validate tên entry trước khi giải 
   để hiểu cú pháp thật (không match nhầm trong comment/string như regex
   thô):
   - **Rust**: gọi `.by_index(`/`.by_name(` trực tiếp trên `ZipArchive` — API
-    thô, severity hạ xuống Info nếu file có tham chiếu `cxf_audit` (heuristic
-    cùng-file, không phải phân tích luồng dữ liệu thật). Cùng lúc, nếu file
+    thô, severity hạ xuống Info nếu file có tham chiếu `cxf_audit`, lọc
+    `Component::Normal` (kỹ thuật sanitize path chuẩn — xác nhận từ code
+    thật, không suy đoán: `georust/transitfeed` dùng đúng pattern này và
+    an toàn thật), hoặc check `.contains("..")` (heuristic cùng-file, không
+    phải phân tích luồng dữ liệu thật). Cùng lúc, nếu file
     có gọi `by_index`/`by_name` mà không thấy tham chiếu
     `assert_within_limits`/`check_resource_limits`/`ZipLimits` ở đâu, thêm
     1 finding riêng cảnh báo thiếu check zip-bomb (§2.4). Ngoài ra flag việc

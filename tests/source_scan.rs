@@ -53,6 +53,59 @@ fn extract(bytes: &[u8]) {
         assert_eq!(findings[1].severity, Severity::Info);
     }
 
+    /// Real-world case, not synthetic: georust/transitfeed's
+    /// `sanitize_filename` uses exactly this idiom (Path::components()
+    /// filtered to Component::Normal) to strip `..`/absolute-path segments
+    /// before joining an untrusted zip entry name onto an output dir — a
+    /// legitimate, textbook-safe guard our own `.contains("..")`-based
+    /// detection previously didn't recognize (found by running scan-source
+    /// against that repo and checking the flagged code by hand).
+    #[test]
+    fn downgrades_severity_when_component_normal_filtering_present() {
+        let source = r#"
+fn extract_zip(archive: &mut zip::ZipArchive<impl std::io::Read + std::io::Seek>, output: &std::path::Path) {
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let outpath = output.join(sanitize_filename(file.name()));
+        write_file(&mut file, &outpath);
+    }
+}
+
+fn sanitize_filename(filename: &str) -> std::path::PathBuf {
+    std::path::Path::new(filename)
+        .components()
+        .filter(|c| matches!(*c, std::path::Component::Normal(..)))
+        .fold(std::path::PathBuf::new(), |mut p, c| { p.push(c.as_os_str()); p })
+}
+"#;
+        let findings = scan_source(Path::new("src/archive.rs"), source).unwrap();
+        let slip_finding = findings
+            .iter()
+            .find(|f| f.rule_id == "rust-zip-raw-extraction")
+            .expect("expected a zip-slip finding");
+        assert_eq!(slip_finding.severity, Severity::Info);
+    }
+
+    #[test]
+    fn downgrades_severity_when_dotdot_contains_check_present() {
+        let source = r#"
+fn extract(bytes: &[u8]) {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut file = archive.by_index(0).unwrap();
+    let name = file.name().to_string();
+    if name.contains("..") {
+        return;
+    }
+}
+"#;
+        let findings = scan_source(Path::new("src/importer.rs"), source).unwrap();
+        let slip_finding = findings
+            .iter()
+            .find(|f| f.rule_id == "rust-zip-raw-extraction")
+            .expect("expected a zip-slip finding");
+        assert_eq!(slip_finding.severity, Severity::Info);
+    }
+
     #[test]
     fn no_bomb_finding_when_resource_limits_checked() {
         let source = r#"
